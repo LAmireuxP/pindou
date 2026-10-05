@@ -1,0 +1,28 @@
+# Gradle
+.gradle/
+build/
+app/build/
+
+# IDE
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local configuration
+local.properties
+
+# Kotlin
+.kotlin/
+
+# OS
+.DS_Store
+.zcode/
+
+# 签名（本地保留，不入库）
+keystore.properties
+keystore/
+
+# 构建产物
+*.apk

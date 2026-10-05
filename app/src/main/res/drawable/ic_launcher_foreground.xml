@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 前景：四颗拼豆（安全区内） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#FF4D8B" android:pathData="M40,38 a13,13 0 1,0 0.01,0 z" />
+    <path android:fillColor="#A4D4C5" android:pathData="M67,42 a12,12 0 1,0 0.01,0 z" />
+    <path android:fillColor="#B8A4ED" android:pathData="M43,66 a12,12 0 1,0 0.01,0 z" />
+    <path android:fillColor="#FFB084" android:pathData="M68,68 a10,10 0 1,0 0.01,0 z" />
+    <!-- 中心的豆孔 -->
+    <path android:fillColor="#FFFFFF" android:pathData="M40,33.5 a4.5,4.5 0 1,0 0.01,0 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M67,38 a4,4 0 1,0 0.01,0 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M43,62 a4,4 0 1,0 0.01,0 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M68,64.5 a3.5,3.5 0 1,0 0.01,0 z" />
+</vector>
