@@ -40,4 +40,31 @@ class DominantColorDownsamplerTest {
         assertEquals(16, grid.size)
         assertTrue(grid.all { (it shr 24) == 0xFF.toByte().toInt() })
     }
+
+    private val SKIN = argb(235, 195, 175)
+    private val EYE = argb(15, 35, 95)
+
+    @Test
+    fun `块内高对比少数派色块被保留`() {
+        // 40×40 源图 → 10×10 网格，每块 4×4=16px；一个块里埋 4px 眼睛（25% ≥ 15%）
+        val w = 40; val h = 40
+        val pixels = IntArray(w * h) { SKIN }
+        for (y in 20 until 22) for (x in 20 until 22) pixels[y * w + x] = EYE
+        val ds = DominantColorDownsampler.downsampleDetailed(pixels, w, h, 10, 10)
+        val idx = 5 * 10 + 5
+        assertEquals("眼睛块应翻转为眼睛色", EYE, ds.colors[idx])
+        assertTrue("应标记为显著细节", ds.salient[idx])
+        // 其他纯皮肤块不受影响
+        assertEquals(SKIN, ds.colors[0])
+    }
+
+    @Test
+    fun `占比不足的少数派不翻转`() {
+        // 眼睛只埋 1px（6.25% < 15%）→ 维持主导色
+        val w = 40; val h = 40
+        val pixels = IntArray(w * h) { SKIN }
+        pixels[21 * w + 21] = EYE
+        val ds = DominantColorDownsampler.downsampleDetailed(pixels, w, h, 10, 10)
+        assertEquals(SKIN, ds.colors[5 * 10 + 5])
+    }
 }

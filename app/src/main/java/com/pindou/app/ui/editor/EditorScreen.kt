@@ -45,15 +45,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.pindou.app.core.editor.EditorEngine
 import com.pindou.app.ui.CellCodeDrawer.drawCellCode
 import com.pindou.app.ui.AppViewModel
@@ -366,6 +363,15 @@ private fun EditorCanvas(
     onStrokeEnd: () -> Unit,
 ) {
     val measurer = rememberTextMeasurer()
+    // 色号布局缓存：按 (色号,整数字号) 复用，缩放时避免每帧重复测量
+    val layoutCache = remember { mutableMapOf<Pair<String, Int>, androidx.compose.ui.text.TextLayoutResult>() }
+    // 锁定标记三角形路径缓存（避免每格每帧 new Path()）
+    val lockPath = remember {
+        Path().apply {
+            moveTo(0f, 0f); lineTo(0f, 0.3f); lineTo(-0.3f, 0f); close()
+        }
+    }
+    val lockColor = Color(0x8C000000) // 55% alpha, 避免每格 copy(alpha=...)
 
     Canvas(
         modifier = Modifier
@@ -517,13 +523,13 @@ private fun EditorCanvas(
                     )
                 }
                 if (engine.locked[idx]) {
-                    val p = Path().apply {
-                        moveTo(left + cell, top)
-                        lineTo(left + cell, top + cell * 0.3f)
-                        lineTo(left + cell * 0.7f, top)
-                        close()
+                    // 复用同一 Path（单位尺寸），通过 canvas 变换平移到格子角
+                    withTransform({
+                        translate(left + cell, top)
+                        scale(cell, cell, pivot = Offset.Zero)
+                    }) {
+                        drawPath(lockPath, lockColor)
                     }
-                    drawPath(p, Color.Black.copy(alpha = 0.55f))
                 }
             }
         }
@@ -563,6 +569,7 @@ private fun EditorCanvas(
                         top = origin.y + y * cell,
                         cell = cell,
                         argb = paletteArgb[colorIdx],
+                        layoutCache = layoutCache,
                     )
                 }
             }

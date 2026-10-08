@@ -19,6 +19,8 @@ import com.pindou.app.core.data.ProjectEntity
 import com.pindou.app.core.data.ProjectRepository
 import com.pindou.app.core.data.SettingsStore
 import com.pindou.app.core.editor.EditorEngine
+import com.pindou.app.core.image.CropRect
+import com.pindou.app.core.image.ImageTransforms
 import com.pindou.app.core.pattern.GenerationStage
 import com.pindou.app.core.pattern.GeneratorOptions
 import com.pindou.app.core.pattern.PatternGenerator
@@ -30,7 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 页面导航（线性流程，M5 引入项目库后再考虑导航库） */
-enum class Screen { HOME, PARAMS, PREVIEW, EDITOR, CONSTRUCTION }
+enum class Screen { HOME, CROP, PARAMS, PREVIEW, EDITOR, CONSTRUCTION }
 
 /** 编辑工具 */
 enum class EditorTool { PAINT, ERASE, PICKER }
@@ -59,6 +61,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var importError by mutableStateOf<String?>(null)
         private set
+
+    // 原始导入图（裁剪页「重置」恢复用；变换不原地修改数组，别名共享是安全的）
+    var originalPixels: IntArray? = null
+        private set
+    var originalW: Int = 0
+        private set
+    var originalH: Int = 0
+        private set
+
+    /** 裁剪框（工作图像素坐标系），null = 不在裁剪流程中 */
+    var cropRect by mutableStateOf<CropRect?>(null)
+        private set
+
+    /** 几何变换执行中标志（防止连点导致的状态竞争） */
+    private var transformRunning = false
+
+    /** 参数页返回目标：true = 从裁剪页确认过来，返回时回裁剪页 */
+    private var paramsFromCrop = false
 
 
     // 项目库与设置
@@ -99,6 +119,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var dithering by mutableStateOf(false)
     var removeBackground by mutableStateOf(false)
     var backgroundTolerance by mutableFloatStateOf(12f)
+    var contentMode by mutableStateOf(com.pindou.app.core.pattern.ContentSimplifier.Mode.OFF)
 
     var genState by mutableStateOf<GenState>(GenState.Idle)
         private set
@@ -167,21 +188,167 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
                 Triple(bmp, pixels, intArrayOf(bmp.width, bmp.height))
             }.onSuccess { (bmp, pixels, size) ->
+                originalPixels = pixels
+                originalW = size[0]
+                originalH = size[1]
                 imagePreview = bmp
                 imagePixels = pixels
                 imageW = size[0]
                 imageH = size[1]
+                cropRect = CropRect.full(size[0], size[1])
+                paramsFromCrop = false
+                adaptiveAnchor = 0
+                adaptiveScale = 1f
                 importError = null
                 genState = GenState.Idle
-                screen = Screen.PARAMS
+                screen = Screen.CROP
             }.onFailure { e ->
                 importError = e.message ?: "导入失败"
             }
         }
     }
 
+    // ---------- 裁剪与几何变换 ----------
+
+    private fun launchTransform(block: suspend () -> Unit) {
+        if (transformRunning) return
+        transformRunning = true
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                block()
+            } finally {
+                transformRunning = false
+            }
+        }
+    }
+
+    private fun rebuildPreview() {
+        val p = imagePixels ?: return
+        if (imageW <= 0 || imageH <= 0) return
+        imagePreview = Bitmap.createBitmap(p, imageW, imageH, Bitmap.Config.ARGB_8888)
+    }
+
+    /** 进入裁剪页（参数页「重新裁剪」入口；导入后自动进入，不经此函数） */
+    fun openCrop() {
+        if (imagePixels == null || imageW <= 0 || imageH <= 0) return
+        cropRect = CropRect.full(imageW, imageH)
+        screen = Screen.CROP
+    }
+
+    fun updateCropRect(rect: CropRect) {
+        cropRect = rect
+    }
+
+    /** 旋转 90°：即时作用于工作图，裁剪框随图像同步变换 */
+    fun rotateImage(clockwise: Boolean) {
+        val pixels = imagePixels ?: return
+        val w = imageW
+        val h = imageH
+        val rect = cropRect
+        launchTransform {
+            val t = ImageTransforms.rotate90(pixels, w, h, clockwise)
+            imagePixels = t.pixels
+            imageW = t.width
+            imageH = t.height
+            if (rect != null) cropRect = ImageTransforms.rotateRect(rect, w, h, clockwise)
+            rebuildPreview()
+        }
+    }
+
+    /** 镜像：即时作用于工作图，裁剪框随图像同步变换 */
+    fun mirrorImage(horizontal: Boolean) {
+        val pixels = imagePixels ?: return
+        val w = imageW
+        val h = imageH
+        val rect = cropRect
+        launchTransform {
+            val t = ImageTransforms.mirror(pixels, w, h, horizontal)
+            imagePixels = t.pixels
+            imageW = t.width
+            imageH = t.height
+            if (rect != null) cropRect = ImageTransforms.mirrorRect(rect, w, h, horizontal)
+            rebuildPreview()
+        }
+    }
+
+    /** 重置全部几何变换，恢复刚导入时的原图 */
+    fun resetImageTransforms() {
+        val pixels = originalPixels ?: return
+        val w = originalW
+        val h = originalH
+        launchTransform {
+            imagePixels = pixels
+            imageW = w
+            imageH = h
+            cropRect = CropRect.full(w, h)
+            rebuildPreview()
+        }
+    }
+
+    /** 确认裁剪并进入参数页；选区为全图时跳过像素复制 */
+    fun confirmCrop() {
+        val pixels = imagePixels ?: return
+        val rect = cropRect ?: return
+        val w = imageW
+        val h = imageH
+        val isFull = rect.left <= 0f && rect.top <= 0f &&
+            rect.right >= w.toFloat() && rect.bottom >= h.toFloat()
+        if (isFull) {
+            paramsFromCrop = true
+            screen = Screen.PARAMS
+            return
+        }
+        launchTransform {
+            val t = ImageTransforms.crop(pixels, w, h, rect)
+            imagePixels = t.pixels
+            imageW = t.width
+            imageH = t.height
+            cropRect = CropRect.full(t.width, t.height)
+            rebuildPreview()
+            withContext(Dispatchers.Main) {
+                paramsFromCrop = true
+                screen = Screen.PARAMS
+            }
+        }
+    }
+
     fun selectPalette(palette: BeadPalette) {
         selectedPalette = palette
+    }
+
+    /** 自适应网格：长边沿用当前设定的长边，短边按图片比例计算，避免生成拉伸 */
+    var adaptiveScale by mutableFloatStateOf(1f)
+        private set
+
+    /** 自适应的锚定格数（点自适应时的网格长边）；0 = 未处于自适应状态 */
+    private var adaptiveAnchor = 0
+
+    fun applyAdaptiveSize() {
+        if (imageW <= 0 || imageH <= 0) return
+        if (adaptiveAnchor <= 0) adaptiveAnchor = maxOf(gridW, gridH)
+        recomputeAdaptive()
+    }
+
+    /** 调节自适应结果的放大倍数（0.5~4），仅在自适应状态下有效 */
+    fun updateAdaptiveScale(scale: Float) {
+        if (adaptiveAnchor <= 0) return
+        adaptiveScale = scale
+        recomputeAdaptive()
+    }
+
+    /** 显式设定网格（固定档位/手动输入），退出自适应状态 */
+    fun setGridSize(w: Int, h: Int) {
+        gridW = w.coerceIn(5, 200)
+        gridH = h.coerceIn(5, 200)
+        adaptiveAnchor = 0
+        adaptiveScale = 1f
+    }
+
+    private fun recomputeAdaptive() {
+        val (baseW, baseH) = ImageTransforms.adaptiveGridSize(imageW, imageH, adaptiveAnchor)
+        val (w, h) = ImageTransforms.scaledGridSize(baseW, baseH, adaptiveScale.toDouble())
+        gridW = w
+        gridH = h
     }
 
     fun generate() {
@@ -200,13 +367,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         ditheringEnabled = dithering,
                         removeBackground = removeBackground,
                         backgroundTolerance = backgroundTolerance.toDouble(),
+                        contentMode = contentMode,
                     ),
                     palette,
                 ) { stage, progress ->
                     genState = GenState.Running(stage, progress)
                 }
                 genState = GenState.Done(result)
-                autoSaveAfterGenerate(result)
+                saveAfterGenerate(result)
                 withContext(Dispatchers.Main) { screen = Screen.PREVIEW }
             } catch (e: Exception) {
                 genState = GenState.Error(e.message ?: "生成失败")
@@ -234,6 +402,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             true
         }
         Screen.PARAMS -> {
+            screen = if (paramsFromCrop) Screen.CROP else Screen.HOME
+            paramsFromCrop = false
+            true
+        }
+        Screen.CROP -> {
             screen = Screen.HOME
             true
         }
@@ -244,12 +417,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         screen = Screen.PARAMS
     }
 
-    /** 生成完成后自动建档保存 */
-    private suspend fun autoSaveAfterGenerate(result: PatternResult) {
-        if (currentProjectId != null) return
-        val id = repository.create(projectName, result)
-        currentProjectId = id
-        toast = "已保存到项目库"
+    /** 存档用名称：参数页可自定义，留空回退默认名 */
+    private fun displayName(): String = projectName.trim().ifBlank { "未命名图纸" }
+
+    /** 生成完成后自动建档/更新保存 */
+    private suspend fun saveAfterGenerate(result: PatternResult) {
+        val id = currentProjectId
+        if (id != null) {
+            repository.updateContent(
+                id, result.width, result.height,
+                result.cells, BooleanArray(result.cells.size), result.palette,
+            )
+            toast = "修改已保存"
+        } else {
+            currentProjectId = repository.create(displayName(), result)
+            projectName = displayName()
+            toast = "已保存到项目库"
+        }
     }
 
     /** 空白画布：直接创建空网格进编辑器 */
@@ -270,12 +454,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun generateFromText(text: String) {
         val palette = selectedPalette ?: return
         if (text.isBlank()) return
+        textSource = text
         genState = GenState.Running(GenerationStage.DOWNSAMPLE, 0f)
         viewModelScope.launch(Dispatchers.Default) {
             try {
                 val bitmap = TextRasterizer.rasterize(text, gridW.coerceIn(5, 200), gridH.coerceIn(5, 200))
                 val pixels = IntArray(bitmap.width * bitmap.height)
                 bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                // 二值化：文字是"白底黑字"，抗锯齿在笔画边缘留了一圈过渡灰，
+                // 降采样后灰格会被映射成杂色号导致字形破碎、识别率低。
+                // 按亮度阈值把过渡灰切开归为纯黑/纯白，字迹锐利后映射色号干净利落。
+                for (i in pixels.indices) {
+                    val p = pixels[i]
+                    val lum = (((p shr 16) and 0xFF) * 299 + ((p shr 8) and 0xFF) * 587 + (p and 0xFF) * 114) / 1000
+                    pixels[i] = if (lum >= 128) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+                }
+                bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                // 让文字栅格化的像素成为"当前源"，这样参数页有预览、调整参数后 generate() 重新生成仍是文字图
+                imagePixels = pixels
+                imageW = bitmap.width
+                imageH = bitmap.height
+                originalPixels = pixels
+                originalW = bitmap.width
+                originalH = bitmap.height
+                cropRect = com.pindou.app.core.image.CropRect.full(bitmap.width, bitmap.height)
+                imagePreview = bitmap // 保留位图供预览，不 recycle
                 val result = PatternGenerator.generate(
                     pixels, bitmap.width, bitmap.height,
                     GeneratorOptions(
@@ -284,14 +487,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         maxColors = if (limitColors) maxColors.coerceIn(1, 64) else null,
                         cleanupEnabled = true,
                         ditheringEnabled = false,
+                        contentMode = contentMode,
                     ),
                     palette,
                 ) { stage, progress ->
                     genState = GenState.Running(stage, progress)
                 }
-                bitmap.recycle()
                 genState = GenState.Done(result)
-                autoSaveAfterGenerate(result)
+                saveAfterGenerate(result)
                 withContext(Dispatchers.Main) { screen = Screen.PREVIEW }
             } catch (e: Exception) {
                 genState = GenState.Error(e.message ?: "文字生成失败")
@@ -358,6 +561,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         projectName = "未命名图纸"
         genState = GenState.Idle
         editor = null
+        imagePixels = null
+        imagePreview = null
+        imageW = 0
+        imageH = 0
+        originalPixels = null
+        originalW = 0
+        originalH = 0
+        cropRect = null
+        paramsFromCrop = false
+        adaptiveAnchor = 0
+        adaptiveScale = 1f
+        textSource = null
+    }
+
+    /** 当前文字拼豆的源文字（非 null = 文字模式）；改文字时更新 */
+    var textSource by mutableStateOf<String?>(null)
+        private set
+
+    /** 文字拼豆改文字内容后重新生成 */
+    fun regenerateFromText(text: String) {
+        textSource = text
+        generateFromText(text)
     }
 
     /** 从预览进入编辑器：以当前结果初始化引擎（重新生成会重建） */
@@ -378,7 +603,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val id = currentProjectId
         if (id != null) {
             viewModelScope.launch {
-                repository.updateContent(
+                // 编辑是局部修改：保留施工进度，只写回格数据与锁
+                repository.updateCells(
                     id = id,
                     width = updated.width,
                     height = updated.height,
@@ -390,7 +616,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         } else {
             viewModelScope.launch {
-                currentProjectId = repository.create(projectName, updated, engine.locked)
+                currentProjectId = repository.create(displayName(), updated, engine.locked)
             }
         }
         screen = Screen.PREVIEW

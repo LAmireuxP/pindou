@@ -22,8 +22,8 @@ android {
         applicationId = "com.pindou.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 13
-        versionName = "1.0.3"
+        versionCode = 14
+        versionName = "1.1.0"
     }
 
     signingConfigs {

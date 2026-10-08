@@ -2,7 +2,6 @@ package com.pindou.app.core.pattern
 
 import com.pindou.app.core.color.Ciede2000
 import com.pindou.app.core.color.ColorConversions
-import kotlin.math.roundToInt
 
 /**
  * Floyd–Steinberg 抖动（Lab 空间误差传播）。
@@ -18,28 +17,37 @@ object FloydSteinbergDitherer {
         height: Int,
         palette: PaletteForDither,
     ): IntArray {
-        val labs = Array(grid.size) { i -> ColorConversions.argbToLab(grid[i]).let { floatArrayOf(it[0], it[1], it[2]) } }
+        // 扁平 Lab 缓冲（3 float/格）：避免为每格分配 FloatArray（200×200 曾达 4 万个小对象）
+        val lab = FloatArray(grid.size * 3)
+        for (i in grid.indices) {
+            val l = ColorConversions.argbToLab(grid[i])
+            lab[i * 3] = l[0]
+            lab[i * 3 + 1] = l[1]
+            lab[i * 3 + 2] = l[2]
+        }
         val out = IntArray(grid.size) { -1 }
+        val cursor = FloatArray(3)
 
         for (y in 0 until height) {
             for (x in 0 until width) {
                 val idx = y * width + x
-                val lab = labs[idx]
-                val best = palette.nearestIndex(lab) ?: continue
+                cursor[0] = lab[idx * 3]
+                cursor[1] = lab[idx * 3 + 1]
+                cursor[2] = lab[idx * 3 + 2]
+                val best = palette.nearestIndex(cursor) ?: continue
                 out[idx] = best
                 // 误差 = 当前 Lab − 所选色卡 Lab
                 val chosen = palette.labOf(best)
-                val eL = lab[0] - chosen[0]
-                val eA = lab[1] - chosen[1]
-                val eB = lab[2] - chosen[2]
+                val eL = cursor[0] - chosen[0]
+                val eA = cursor[1] - chosen[1]
+                val eB = cursor[2] - chosen[2]
 
                 fun spread(nx: Int, ny: Int, factor: Double) {
                     if (nx < 0 || nx >= width || ny >= height) return
-                    val ni = ny * width + nx
-                    val t = labs[ni]
-                    t[0] = (t[0] + eL * factor).toFloat()
-                    t[1] = (t[1] + eA * factor).toFloat()
-                    t[2] = (t[2] + eB * factor).toFloat()
+                    val ni = (ny * width + nx) * 3
+                    lab[ni] = (lab[ni] + eL * factor).toFloat()
+                    lab[ni + 1] = (lab[ni + 1] + eA * factor).toFloat()
+                    lab[ni + 2] = (lab[ni + 2] + eB * factor).toFloat()
                 }
                 spread(x + 1, y, 7.0 / 16.0)
                 spread(x - 1, y + 1, 3.0 / 16.0)

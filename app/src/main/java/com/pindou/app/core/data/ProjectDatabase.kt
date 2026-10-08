@@ -46,8 +46,24 @@ interface ProjectDao {
     @Insert
     suspend fun insert(project: ProjectEntity): Long
 
+    // 编辑器完成：局部修改格数据与锁，保留施工进度
     @Query("UPDATE projects SET cells = :cells, locked = :locked, thumbnailPath = :thumb, updatedAt = :now WHERE id = :id")
-    suspend fun updateContent(id: Long, cells: ByteArray, locked: ByteArray, thumb: String?, now: Long)
+    suspend fun updateCells(id: Long, cells: ByteArray, locked: ByteArray, thumb: String?, now: Long)
+
+    // 重新生成：图纸整体变化（尺寸、色卡、格数据），施工进度随图纸作废（置空、游标归零），
+    // 避免 doneCells 与新 cells 尺寸错位
+    @Query("UPDATE projects SET width = :width, height = :height, beadSize = :beadSize, paletteBrand = :paletteBrand, cells = :cells, locked = :locked, thumbnailPath = :thumb, doneCells = NULL, buildCursor = 0, updatedAt = :now WHERE id = :id")
+    suspend fun updateContent(
+        id: Long,
+        width: Int,
+        height: Int,
+        beadSize: String,
+        paletteBrand: String,
+        cells: ByteArray,
+        locked: ByteArray,
+        thumb: String?,
+        now: Long,
+    )
 
     @Query("UPDATE projects SET name = :name, updatedAt = :now WHERE id = :id")
     suspend fun rename(id: Long, name: String, now: Long)

@@ -51,7 +51,26 @@ class ProjectRepository(private val context: Context) {
         )
     }
 
-    /** 更新项目内容（编辑完成后调用） */
+    /** 编辑器完成：只更新格数据与锁，保留施工进度（尺寸色卡不变） */
+    suspend fun updateCells(
+        id: Long,
+        width: Int,
+        height: Int,
+        cells: IntArray,
+        locked: BooleanArray,
+        palette: BeadPalette,
+    ) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val thumb = renderThumbnail(PatternResult(width, height, cells, palette, 0))
+        val old = dao.getById(id)?.thumbnailPath
+        dao.updateCells(id, GridCodec.encodeCells(cells), GridCodec.encodeLocks(locked), thumb, now)
+        // 旧缩略图清理（新图已生成时）
+        if (thumb != null && old != null && old != thumb) {
+            runCatching { File(old).delete() }
+        }
+    }
+
+    /** 重新生成：尺寸、色卡、格数据全量更新，施工进度作废（图纸已变） */
     suspend fun updateContent(
         id: Long,
         width: Int,
@@ -63,7 +82,11 @@ class ProjectRepository(private val context: Context) {
         val now = System.currentTimeMillis()
         val thumb = renderThumbnail(PatternResult(width, height, cells, palette, 0))
         val old = dao.getById(id)?.thumbnailPath
-        dao.updateContent(id, GridCodec.encodeCells(cells), GridCodec.encodeLocks(locked), thumb, now)
+        dao.updateContent(
+            id, width, height,
+            palette.beadSize.name, palette.brand,
+            GridCodec.encodeCells(cells), GridCodec.encodeLocks(locked), thumb, now,
+        )
         // 旧缩略图清理（新图已生成时）
         if (thumb != null && old != null && old != thumb) {
             runCatching { File(old).delete() }

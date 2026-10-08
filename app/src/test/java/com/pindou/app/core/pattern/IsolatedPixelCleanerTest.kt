@@ -49,4 +49,42 @@ class IsolatedPixelCleanerTest {
         val out = IsolatedPixelCleaner.clean(cells, w, h)
         assertEquals(-1, out[2 * w + 2])
     }
+
+    // 色差保护用色：深藏青底 + 一个近同的深藏青（ΔE < 12）+ 一个明显的红（ΔE 远大于 12）
+    private val NAVY = 0xFF1A2438.toInt()
+    private val NAVY_NEAR = 0xFF1E2A40.toInt()
+    private val RED_BRIGHT = 0xFFFF2A2A.toInt()
+
+    @Test
+    fun `色差小的孤立点仍被清理`() {
+        val w = 5; val h = 5
+        val cells = field(w * h, 0) // 0 = NAVY
+        cells[2 * w + 2] = 1        // 1 = 近同藏青
+        val out = IsolatedPixelCleaner.clean(
+            cells, w, h,
+            paletteArgbs = listOf(NAVY, NAVY_NEAR, RED_BRIGHT),
+        )
+        assertEquals(0, out[2 * w + 2])
+    }
+
+    @Test
+    fun `色差大的孤立点被保留`() {
+        val w = 5; val h = 5
+        val cells = field(w * h, 0) // 0 = NAVY
+        cells[2 * w + 2] = 2        // 2 = 亮红，真细节
+        val out = IsolatedPixelCleaner.clean(
+            cells, w, h,
+            paletteArgbs = listOf(NAVY, NAVY_NEAR, RED_BRIGHT),
+        )
+        assertEquals(2, out[2 * w + 2])
+    }
+
+    @Test
+    fun `不传色卡时保持旧行为`() {
+        val w = 5; val h = 5
+        val cells = field(w * h, 0)
+        cells[2 * w + 2] = 2
+        val out = IsolatedPixelCleaner.clean(cells, w, h)
+        assertEquals(0, out[2 * w + 2]) // 无保护：照旧替换
+    }
 }

@@ -124,12 +124,11 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                 ) {
                     PatternCanvas(result = result, showCodes = showCodes)
                 }
-                // 预览画布宽约 1000px，200×200 时每格仅 ~5px，色号物理上画不出来
+                // 预览画布支持捏合缩放；1 倍下每格小于 26px 时色号画不出来，提示捏合放大
                 val cellPxApprox = 1000f / result.width
                 if (showCodes && cellPxApprox < 26f) {
-                    // 大图纸在预览缩放下画不出可读色号，引导进编辑器放大查看
                     Text(
-                        "格子较小，色号需在编辑器中放大查看（捏合缩放）",
+                        "格子较小：双指捏合画布放大即可查看色号，双击复原",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
