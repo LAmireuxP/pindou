@@ -18,6 +18,7 @@ data class GeneratorOptions(
     val saliencyDeltaE: Double = 15.0,  // 显著细节与主导色的最小 ΔE；0 = 关闭检测
     val saliencyFraction: Double = 0.15, // 显著细节色块的最小像素占比
     val contentMode: ContentSimplifier.Mode = ContentSimplifier.Mode.OFF, // 内容简化（前置）
+    val autoExposure: Boolean = true,    // 欠曝照片自动提亮（中位亮度 < 70 才触发）
     val regionCleanupEnabled: Boolean = true, // 区域清理：小面积连通碎块并入邻域
     val regionMinArea: Int? = null,           // null = 按格数自适应
 )
@@ -42,7 +43,7 @@ data class PatternResult(
     override fun hashCode(): Int = cells.contentHashCode()
 }
 
-enum class GenerationStage { DOWNSAMPLE, BACKGROUND, REDUCE, MAP, CLEAN, MERGE, DONE }
+enum class GenerationStage { EXPOSURE, DOWNSAMPLE, BACKGROUND, REDUCE, MAP, CLEAN, MERGE, LIMIT, DONE }
 
 /**
  * 图纸生成管线：主导色降采样 → (K-means 压色) → 色卡映射 → (抖动) → (杂色清理) → (相似色号合并)。
@@ -59,13 +60,19 @@ object PatternGenerator {
         onStage: (GenerationStage, Float) -> Unit = { _, _ -> },
     ): PatternResult {
         val startNanos = System.nanoTime()
+        // ⓪a 曝光修正：欠曝照片先提亮，主体颜色才能展开（正常曝光原图直通）
+        onStage(GenerationStage.EXPOSURE, 0f)
+        val exposurePixels = if (options.autoExposure) {
+            ExposureCorrector.correct(pixels, srcW, srcH)
+        } else pixels
+        onStage(GenerationStage.EXPOSURE, 1f)
         // ⓪ 内容简化（前置）：保边去细节，让降采样面对的是已扁平化的图
         val workPixels = if (options.contentMode != ContentSimplifier.Mode.OFF) {
             // 简化力度与目标网格联动：块 ≈ 源图/网格，先得到"简化过的图"再逐格转
             ContentSimplifier.simplifyForGrid(
-                pixels, srcW, srcH, options.contentMode, options.gridW, options.gridH,
+                exposurePixels, srcW, srcH, options.contentMode, options.gridW, options.gridH,
             )
-        } else pixels
+        } else exposurePixels
         // ① 主导色降采样 + 显著细节检测（眼睛、高光等小面积高对比色块优先保留）
         onStage(GenerationStage.DOWNSAMPLE, 0f)
         val down = DominantColorDownsampler.downsampleDetailed(
@@ -122,18 +129,6 @@ object PatternGenerator {
             onStage(GenerationStage.CLEAN, 0.5f)
         }
 
-        // ⑤b 区域清理：照片纹理残留的小面积连通碎块整块并入邻接色块（噪感主要来源）
-        if (options.regionCleanupEnabled) {
-            val minArea = options.regionMinArea ?: RegionCleaner.adaptiveMinArea(
-                options.gridW * options.gridH,
-            )
-            cleaned = RegionCleaner.clean(
-                cleaned, options.gridW, options.gridH, minArea,
-                palette.colors.map { it.argb },
-            )
-        }
-        onStage(GenerationStage.CLEAN, 1f)
-
         // ⑥ 相似色号合并：近同色号并入常用方，消除渐变区的跳号噪点
         if (options.similarCodeMaxDeltaE > 0.0) {
             onStage(GenerationStage.MERGE, 0f)
@@ -144,6 +139,31 @@ object PatternGenerator {
             )
             onStage(GenerationStage.MERGE, 1f)
         }
+
+        // ⑥b 最终限色：映射后色号数会超过 K-means 的 K（各聚类中心落到不同色号），
+        // 用户限色时在此兜底压到 maxColors 以内
+        if (options.maxColors != null) {
+            onStage(GenerationStage.LIMIT, 0f)
+            cleaned = ColorLimiter.limit(cleaned, palette.colors.map { it.argb }, options.maxColors)
+            onStage(GenerationStage.LIMIT, 1f)
+        }
+
+        // ⑥c 区域清理：照片纹理残留的小面积连通碎块整块并入邻接色块（噪感主要来源）。
+        // 放在合并/限色之后，吃到色号收敛的级联效果；跑两轮，第二轮清掉首轮合并产生的新碎块
+        if (options.regionCleanupEnabled) {
+            val minArea = options.regionMinArea ?: RegionCleaner.adaptiveMinArea(
+                options.gridW * options.gridH,
+            )
+            cleaned = RegionCleaner.clean(
+                cleaned, options.gridW, options.gridH, minArea,
+                palette.colors.map { it.argb },
+            )
+            cleaned = RegionCleaner.clean(
+                cleaned, options.gridW, options.gridH, minArea,
+                palette.colors.map { it.argb },
+            )
+        }
+        onStage(GenerationStage.CLEAN, 1f)
         val result = PatternResult(
             options.gridW, options.gridH, cleaned, palette,
             (System.nanoTime() - startNanos) / 1_000_000,

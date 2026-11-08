@@ -132,9 +132,9 @@ object RegionCleaner {
         return if (merged) out else cells
     }
 
-    /** 未手动指定时的自适应最小区域面积：格数的 0.15%，钳制 3..12 */
+    /** 未手动指定时的自适应最小区域面积：格数的 0.4%，钳制 4..24（真细节由 keepDeltaE 保护） */
     fun adaptiveMinArea(cellCount: Int): Int =
-        (cellCount * 0.0015).toInt().coerceIn(3, 12)
+        (cellCount * 0.004).toInt().coerceIn(4, 24)
 
     private class Region(val color: Int, val size: Int, val hasLocked: Boolean)
 }

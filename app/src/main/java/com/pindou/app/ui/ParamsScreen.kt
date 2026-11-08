@@ -385,12 +385,14 @@ fun ParamsScreen(vm: AppViewModel) {
                     )
                     Text(
                         when (s.stage) {
+                            GenerationStage.EXPOSURE -> "曝光修正中…"
                             GenerationStage.DOWNSAMPLE -> "降采样中…"
                             GenerationStage.BACKGROUND -> "移除背景中…"
                             GenerationStage.REDUCE -> "压缩颜色中…"
                             GenerationStage.MAP -> "色卡映射中…"
                             GenerationStage.CLEAN -> "杂色清理中…"
                             GenerationStage.MERGE -> "相似色号合并中…"
+                            GenerationStage.LIMIT -> "限色合并中…"
                             GenerationStage.DONE -> "完成"
                         },
                         style = MaterialTheme.typography.bodyMedium,

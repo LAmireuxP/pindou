@@ -38,7 +38,8 @@ object ContentSimplifier {
     ): IntArray {
         val tile = if (gridW > 0 && gridH > 0 && width > 0) {
             ((width.toDouble() / gridW + height.toDouble() / gridH) / 2.0)
-                .roundToInt().coerceIn(4, 48)
+                .roundToInt()
+                .coerceIn(4, 48)
         } else 8
         return simplify(pixels, width, height, mode, tile)
     }

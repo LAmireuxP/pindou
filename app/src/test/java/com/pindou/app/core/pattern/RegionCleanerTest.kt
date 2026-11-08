@@ -57,8 +57,8 @@ class RegionCleanerTest {
 
     @Test
     fun `自适应最小面积钳制`() {
-        assertEquals(3, RegionCleaner.adaptiveMinArea(841))   // 29×29 → 下限 3
-        assertEquals(12, RegionCleaner.adaptiveMinArea(10000)) // 100×100 → 上限 12
-        assertEquals(3, RegionCleaner.adaptiveMinArea(0))
+        assertEquals(4, RegionCleaner.adaptiveMinArea(841))    // 29×29 → 3.36 → 下限 4
+        assertEquals(24, RegionCleaner.adaptiveMinArea(10000)) // 100×100 → 40 → 上限 24
+        assertEquals(4, RegionCleaner.adaptiveMinArea(0))
     }
 }
