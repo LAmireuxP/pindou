@@ -67,8 +67,17 @@ fun PindouApp(vm: AppViewModel) {
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(vm::onImagePicked) }
 
+    // .bpat 工程文件导入：同样走 SAF，任意 mime（导出方自定义扩展名，不做类型白名单）
+    val bpatPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(vm::importBpat) }
+
     fun pickImage() {
         imagePicker.launch(arrayOf("image/*"))
+    }
+
+    fun pickBpat() {
+        bpatPicker.launch(arrayOf("*/*"))
     }
 
     BackHandler(enabled = vm.screen != Screen.HOME) {
@@ -104,7 +113,7 @@ fun PindouApp(vm: AppViewModel) {
     ) { innerPadding ->
         Box(Modifier.padding(innerPadding)) {
             when (vm.screen) {
-                Screen.HOME -> HomeScreen(vm, selectedTab, onPickImage = ::pickImage)
+                Screen.HOME -> HomeScreen(vm, selectedTab, onPickImage = ::pickImage, onPickBpat = ::pickBpat)
                 Screen.CROP -> CropScreen(vm)
                 Screen.PARAMS -> ParamsScreen(vm)
                 Screen.PREVIEW -> PreviewScreen(vm)
@@ -116,15 +125,15 @@ fun PindouApp(vm: AppViewModel) {
 }
 
 @Composable
-private fun HomeScreen(vm: AppViewModel, selectedTab: Int, onPickImage: () -> Unit) {
+private fun HomeScreen(vm: AppViewModel, selectedTab: Int, onPickImage: () -> Unit, onPickBpat: () -> Unit) {
     when (selectedTab) {
-        0 -> ProjectLibraryTab(vm, onPickImage)
+        0 -> ProjectLibraryTab(vm, onPickImage, onPickBpat)
         1 -> ParamsScreen(vm)
         else -> SettingsScreen(vm)
     }
 }
 
 @Composable
-private fun ProjectLibraryTab(vm: AppViewModel, onPickImage: () -> Unit) {
-    ProjectLibraryScreen(vm, onPickImage)
+private fun ProjectLibraryTab(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: () -> Unit) {
+    ProjectLibraryScreen(vm, onPickImage, onPickBpat)
 }

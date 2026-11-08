@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -47,12 +49,14 @@ import java.util.Locale
 
 /** 项目库首页：新建入口 + 项目卡片网格 */
 @Composable
-fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit) {
+fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: () -> Unit = {}) {
     // 必须订阅（collectAsState）而非读 .value：StateFlow 配 WhileSubscribed 时读取不会启动上游查询
     val projects by vm.projects.collectAsState()
     var renameTarget by remember { mutableStateOf<ProjectEntity?>(null) }
     var textDialogOpen by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<ProjectEntity?>(null) }
+    var albumTarget by remember { mutableStateOf<ProjectEntity?>(null) }
+    val visibleProjects = vm.filteredProjects(projects)
 
     Column(
         modifier = Modifier
@@ -131,11 +135,53 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("我的作品", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "${projects.size} 个",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${visibleProjects.size} 个",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onPickBpat) { Text("导入 .bpat") }
+            }
+        }
+
+        // 搜索 + 收藏/专辑筛选
+        OutlinedTextField(
+            value = vm.libraryQuery,
+            onValueChange = { vm.libraryQuery = it },
+            singleLine = true,
+            label = { Text("搜索图纸") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+        ) {
+            FilterChip(
+                selected = !vm.libraryFavOnly && vm.libraryAlbum == null,
+                onClick = {
+                    vm.libraryFavOnly = false
+                    vm.libraryAlbum = null
+                },
+                label = { Text("全部") },
             )
+            FilterChip(
+                selected = vm.libraryFavOnly,
+                onClick = {
+                    vm.libraryFavOnly = !vm.libraryFavOnly
+                    vm.libraryAlbum = null
+                },
+                label = { Text("★ 收藏") },
+            )
+            vm.albumNames(projects).forEach { album ->
+                FilterChip(
+                    selected = vm.libraryAlbum == album,
+                    onClick = { vm.libraryAlbum = if (vm.libraryAlbum == album) null else album },
+                    label = { Text(album) },
+                )
+            }
         }
 
         vm.lastError?.let { err ->
@@ -178,7 +224,7 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 modifier = Modifier.padding(bottom = Spacing.lg),
             ) {
-                projects.chunked(2).forEach { rowProjects ->
+                visibleProjects.chunked(2).forEach { rowProjects ->
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                         modifier = Modifier.fillMaxWidth(),
@@ -190,6 +236,9 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit) {
                                     onClick = { vm.openProject(project) },
                                     onRename = { renameTarget = project },
                                     onDelete = { deleteTarget = project },
+                                    onFav = { vm.setFavProject(project, !project.fav) },
+                                    onDuplicate = { vm.duplicateProject(project) },
+                                    onAlbum = { albumTarget = project },
                                 )
                             }
                         }
@@ -273,6 +322,31 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit) {
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
         )
     }
+
+    albumTarget?.let { target ->
+        var album by remember(target.id) { mutableStateOf(target.album) }
+        AlertDialog(
+            onDismissRequest = { albumTarget = null },
+            title = { Text("移到专辑") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = album,
+                        onValueChange = { album = it },
+                        singleLine = true,
+                        label = { Text("专辑名（留空 = 未分组）") },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.setAlbumProject(target, album)
+                    albumTarget = null
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { albumTarget = null }) { Text("取消") } },
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -282,6 +356,9 @@ private fun ProjectCard(
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onFav: () -> Unit,
+    onDuplicate: () -> Unit,
+    onAlbum: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -321,13 +398,17 @@ private fun ProjectCard(
             }
             Column(Modifier.padding(Spacing.sm)) {
                 Text(
-                    project.name,
+                    // 收藏项目在标题前加星标，一眼可辨
+                    if (project.fav) "★ ${project.name}" else project.name,
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "${project.width}×${project.height} · ${project.paletteBrand}",
+                    buildString {
+                        append("${project.width}×${project.height} · ${project.paletteBrand}")
+                        if (project.album.isNotBlank()) append(" · ${project.album}")
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -345,19 +426,37 @@ private fun ProjectCard(
         AlertDialog(
             onDismissRequest = { menuOpen = false },
             title = { Text(project.name) },
-            text = { Text("${project.width}×${project.height} · ${project.paletteBrand}") },
-            confirmButton = {
-                TextButton(onClick = {
-                    menuOpen = false
-                    onRename()
-                }) { Text("重命名") }
+            text = {
+                Column {
+                    Text(
+                        "${project.width}×${project.height} · ${project.paletteBrand}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = {
+                        menuOpen = false
+                        onFav()
+                    }) { Text(if (project.fav) "取消收藏" else "收藏") }
+                    TextButton(onClick = {
+                        menuOpen = false
+                        onDuplicate()
+                    }) { Text("复刻一份") }
+                    TextButton(onClick = {
+                        menuOpen = false
+                        onAlbum()
+                    }) { Text("移到专辑") }
+                    TextButton(onClick = {
+                        menuOpen = false
+                        onRename()
+                    }) { Text("重命名") }
+                    TextButton(onClick = {
+                        menuOpen = false
+                        onDelete()
+                    }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }
             },
-            dismissButton = {
-                TextButton(onClick = {
-                    menuOpen = false
-                    onDelete()
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
-            },
+            confirmButton = {},
+            dismissButton = {},
         )
     }
 }

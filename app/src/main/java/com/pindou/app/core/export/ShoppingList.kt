@@ -17,20 +17,39 @@ object ShoppingList {
         projectName: String,
         date: Date = Date(),
     ): String {
-        val usage = result.usage()
+        return render(listOf(result), projectName, date)
+    }
+
+    /**
+     * 多页聚合清单：各页同色号用量合并，标题标注页数。
+     * 单页结果走同一实现，输出一致。
+     */
+    fun render(
+        results: List<PatternResult>,
+        projectName: String,
+        date: Date = Date(),
+    ): String {
+        require(results.isNotEmpty()) { "无页数据" }
+        val first = results.first()
+        val counts = HashMap<Int, Int>()
+        for (r in results) {
+            for (c in r.cells) if (c >= 0) counts.merge(c, 1, Int::plus)
+        }
+        val usage = counts.entries.sortedByDescending { it.value }.map { it.key to it.value }
         val total = usage.sumOf { it.second }
         val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(date)
+        val pageCount = if (results.size > 1) "（${results.size} 页）" else ""
 
         return buildString {
             appendLine("拼豆采购清单")
             appendLine("项目：$projectName")
-            appendLine("图纸：${result.width}×${result.height}（共 $total 粒）")
-            appendLine("色卡：${result.palette.brandLabel}")
+            appendLine("图纸：${first.width}×${first.height}$pageCount（共 $total 粒）")
+            appendLine("色卡：${first.palette.brandLabel}")
             appendLine("日期：$dateStr")
             appendLine("—".repeat(24))
             appendLine("色号\t颜色\t数量\t建议购买")
             for ((idx, count) in usage) {
-                val entry = result.palette.colors[idx]
+                val entry = first.palette.colors[idx]
                 val name = entry.name ?: ""
                 val packs = packSuggestion(count)
                 appendLine("${entry.code}\t$name\t$count\t$packs")

@@ -76,7 +76,7 @@ class EditorEngineTest {
     }
 
     @Test
-    fun `撤销栈上限 100`() {
+    fun `撤销栈上限 50`() {
         val e = engine3x3()
         repeat(120) { i ->
             val s = e.startStroke()
@@ -85,7 +85,7 @@ class EditorEngineTest {
         }
         var undos = 0
         while (e.undo()) undos++
-        assertEquals(100, undos)
+        assertEquals(50, undos)
     }
 
     @Test
@@ -102,5 +102,87 @@ class EditorEngineTest {
         assertTrue(s2.setCell(1, 5))
         e.endStroke(s2)
         assertTrue(e.revision > r1)
+    }
+
+    @Test
+    fun `多页独立绘制与切换`() {
+        val e = EditorEngine(3, 3, listOf(IntArray(9) { -1 }, IntArray(9) { -1 }))
+        assertEquals(2, e.pageCount)
+        e.setPage(1)
+        val s = e.startStroke()
+        s.setCell(0, 5)
+        e.endStroke(s)
+        e.setPage(0)
+        assertEquals(-1, e.cells[0]) // 第 1 页不受第 2 页笔触影响
+        e.setPage(1)
+        assertEquals(5, e.cells[0])
+    }
+
+    @Test
+    fun `油漆桶填充同色连通区域`() {
+        val e = engine3x3()
+        assertTrue(e.floodFill(4, 5))
+        assertEquals(9, e.cells.count { it == 5 }) // 全空棋盘 4 连通充满
+        e.undo()
+        assertEquals(-1, e.cells[4]) // 整个填充作为一条撤销记录
+    }
+
+    @Test
+    fun `油漆桶锁定格不改色但保持连通`() {
+        val e = engine3x3()
+        e.setLocked(1, true)
+        assertTrue(e.floodFill(0, 7))
+        assertEquals(-1, e.cells[1])
+        assertEquals(8, e.cells.count { it == 7 })
+    }
+
+    @Test
+    fun `油漆桶起点同色无操作`() {
+        val e = engine3x3()
+        assertFalse(e.floodFill(0, -1)) // 目标色与当前色相同
+        assertFalse(e.canUndo)
+    }
+
+    @Test
+    fun `新增复制页与删除页可撤销`() {
+        val e = engine3x3()
+        val s = e.startStroke()
+        s.setCell(0, 5)
+        e.endStroke(s)
+        e.addPage(copyCurrent = true)
+        assertEquals(2, e.pageCount)
+        assertEquals(1, e.pageIndex)
+        assertEquals(5, e.cells[0])
+        assertTrue(e.removePage(0))
+        assertEquals(1, e.pageCount)
+        assertTrue(e.undo())
+        assertEquals(2, e.pageCount) // 撤销删除页
+        assertEquals(1, e.pageIndex)
+        assertTrue(e.undo())
+        assertEquals(1, e.pageCount) // 撤销新增页
+        assertEquals(0, e.pageIndex)
+    }
+
+    @Test
+    fun `改尺寸居中保留内容`() {
+        val e = engine3x3()
+        val s = e.startStroke()
+        s.setCell(4, 5) // 中心格 (1,1)
+        e.endStroke(s)
+        e.resize(5, 5)
+        assertEquals(25, e.cells.size)
+        assertEquals(5, e.cells[2 * 5 + 2]) // (1,1) 平移到 (2,2)
+        e.undo()
+        assertEquals(9, e.cells.size)
+        assertEquals(5, e.cells[4])
+    }
+
+    @Test
+    fun `多页改尺寸所有页同步`() {
+        val e = EditorEngine(3, 3, listOf(IntArray(9) { -1 }, IntArray(9) { 2 }))
+        e.resize(4, 4)
+        assertEquals(16, e.pages[0].size)
+        assertEquals(16, e.pages[1].size)
+        assertEquals(9, e.pages[1].count { it == 2 }) // 9 个旧格全部保留
     }
 }

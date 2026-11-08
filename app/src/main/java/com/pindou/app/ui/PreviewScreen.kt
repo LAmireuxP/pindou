@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Card
@@ -28,6 +29,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -65,7 +67,14 @@ fun PreviewScreen(vm: AppViewModel) {
 @Composable
 private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern.PatternResult) {
     var showCodes by remember { mutableStateOf(true) }
-    val usage = remember(result) { result.usage() }
+    val pages = remember(result, vm.projectPages) { vm.currentPages().ifEmpty { listOf(result) } }
+    var pageIdx by remember(pages) { mutableIntStateOf(0) }
+    val currentPage = pages[pageIdx.coerceIn(0, pages.size - 1)]
+    val usage = remember(pages) {
+        val counts = HashMap<Int, Int>()
+        for (p in pages) for (c in p.cells) if (c >= 0) counts.merge(c, 1, Int::plus)
+        counts.entries.sortedByDescending { it.value }.map { it.key to it.value }
+    }
     val total = usage.sumOf { it.second }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -117,12 +126,34 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
 
         Card(shape = MaterialTheme.shapes.large) {
             Column {
+                if (pages.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.md, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = { if (pageIdx > 0) pageIdx-- },
+                            enabled = pageIdx > 0,
+                        ) { Text("‹") }
+                        Text(
+                            "第 ${pageIdx + 1}/${pages.size} 页",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        TextButton(
+                            onClick = { if (pageIdx < pages.size - 1) pageIdx++ },
+                            enabled = pageIdx < pages.size - 1,
+                        ) { Text("›") }
+                    }
+                }
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .aspectRatio(result.width.toFloat() / result.height.toFloat()),
                 ) {
-                    PatternCanvas(result = result, showCodes = showCodes)
+                    PatternCanvas(result = currentPage, showCodes = showCodes)
                 }
                 // 预览画布支持捏合缩放；1 倍下每格小于 26px 时色号画不出来，提示捏合放大
                 val cellPxApprox = 1000f / result.width
@@ -200,7 +231,7 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                     Button(
                         onClick = {
                             runExport("PNG 图纸") {
-                                ExportService.exportPng(context, result, projectName, symbol = false)
+                                ExportService.exportPng(context, pages, projectName, symbol = false)
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -209,7 +240,7 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                     Button(
                         onClick = {
                             runExport("符号版") {
-                                ExportService.exportPng(context, result, projectName, symbol = true)
+                                ExportService.exportPng(context, pages, projectName, symbol = true)
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -224,7 +255,7 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                     Button(
                         onClick = {
                             runExport("PDF 打印版") {
-                                ExportService.exportPdf(context, result, projectName)
+                                ExportService.exportPdf(context, pages, projectName)
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -236,7 +267,7 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                     ) { Text("PDF 打印版") }
                     Button(
                         onClick = {
-                            ExportService.shareList(context, result, projectName)
+                            ExportService.shareList(context, pages, projectName)
                         },
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.small,

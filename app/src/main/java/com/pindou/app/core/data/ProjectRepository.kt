@@ -17,7 +17,7 @@ class ProjectRepository(private val context: Context) {
 
     private val db: PindouDatabase by lazy {
         Room.databaseBuilder(context, PindouDatabase::class.java, "pindou.db")
-            .addMigrations(PindouDatabase.MIGRATION_1_2)
+            .addMigrations(PindouDatabase.MIGRATION_1_2, PindouDatabase.MIGRATION_2_3)
             .build()
     }
 
@@ -32,6 +32,7 @@ class ProjectRepository(private val context: Context) {
         name: String,
         result: PatternResult,
         locked: BooleanArray? = null,
+        pages: Int = 1,
     ): Long = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val thumb = renderThumbnail(result)
@@ -44,6 +45,7 @@ class ProjectRepository(private val context: Context) {
                 paletteBrand = result.palette.brand,
                 cells = GridCodec.encodeCells(result.cells),
                 locked = GridCodec.encodeLocks(locked ?: BooleanArray(result.cells.size)),
+                pages = pages,
                 thumbnailPath = thumb,
                 createdAt = now,
                 updatedAt = now,
@@ -59,11 +61,16 @@ class ProjectRepository(private val context: Context) {
         cells: IntArray,
         locked: BooleanArray,
         palette: BeadPalette,
+        pages: Int = 1,
     ) = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        val thumb = renderThumbnail(PatternResult(width, height, cells, palette, 0))
+        // cells 为多页平铺数据时，缩略图只渲染第 1 页
+        val page0 = if (pages > 1 && cells.size > width * height) {
+            cells.copyOfRange(0, width * height)
+        } else cells
+        val thumb = renderThumbnail(PatternResult(width, height, page0, palette, 0))
         val old = dao.getById(id)?.thumbnailPath
-        dao.updateCells(id, GridCodec.encodeCells(cells), GridCodec.encodeLocks(locked), thumb, now)
+        dao.updateCells(id, GridCodec.encodeCells(cells), GridCodec.encodeLocks(locked), pages, thumb, now)
         // 旧缩略图清理（新图已生成时）
         if (thumb != null && old != null && old != thumb) {
             runCatching { File(old).delete() }
@@ -109,6 +116,21 @@ class ProjectRepository(private val context: Context) {
         )
     }
 
+    /** 收藏/取消收藏 */
+    suspend fun setFav(id: Long, fav: Boolean) = withContext(Dispatchers.IO) {
+        dao.setFav(id, fav, System.currentTimeMillis())
+    }
+
+    /** 移入/移出专辑（空串 = 未分组） */
+    suspend fun setAlbum(id: Long, album: String) = withContext(Dispatchers.IO) {
+        dao.setAlbum(id, album.trim(), System.currentTimeMillis())
+    }
+
+    /** 保存参考原图路径 */
+    suspend fun setRefPath(id: Long, path: String?) = withContext(Dispatchers.IO) {
+        dao.setRefPath(id, path, System.currentTimeMillis())
+    }
+
     suspend fun rename(id: Long, name: String) = withContext(Dispatchers.IO) {
         dao.rename(id, name, System.currentTimeMillis())
     }
@@ -117,6 +139,50 @@ class ProjectRepository(private val context: Context) {
         val project = dao.getById(id)
         project?.thumbnailPath?.let { runCatching { File(it).delete() } }
         dao.delete(id)
+    }
+
+    /**
+     * 导入外部图纸（.bpat）或复刻项目：全量新建一个实体。
+     * 复刻时缩略图复制一份独立文件，避免删除原项目时把复刻的图也删掉。
+     */
+    suspend fun importProject(
+        name: String,
+        width: Int,
+        height: Int,
+        palette: BeadPalette,
+        pagesCells: List<IntArray>,
+        pagesLocks: List<BooleanArray>,
+        album: String = "",
+        thumbnailCopyFrom: String? = null,
+    ): Long = withContext(Dispatchers.IO) {
+        require(pagesCells.isNotEmpty()) { "页数据为空" }
+        val now = System.currentTimeMillis()
+        val flat = pagesCells.reduce { acc, cur -> acc + cur }
+        val flatLocks = pagesLocks.reduce { acc, cur -> acc + cur }
+        val thumb = thumbnailCopyFrom?.let { src ->
+            runCatching {
+                val dir = File(context.filesDir, "thumbs").apply { mkdirs() }
+                val dst = File(dir, "thumb_${System.currentTimeMillis()}.png")
+                File(src).copyTo(dst, overwrite = true)
+                dst.absolutePath
+            }.getOrNull()
+        } ?: renderThumbnail(PatternResult(width, height, pagesCells[0], palette, 0))
+        dao.insert(
+            ProjectEntity(
+                name = name,
+                width = width,
+                height = height,
+                beadSize = palette.beadSize.name,
+                paletteBrand = palette.brand,
+                cells = GridCodec.encodeCells(flat),
+                locked = GridCodec.encodeLocks(flatLocks),
+                thumbnailPath = thumb,
+                createdAt = now,
+                updatedAt = now,
+                pages = pagesCells.size,
+                album = album,
+            ),
+        )
     }
 
     /** 生成缩略图 PNG，返回文件路径 */

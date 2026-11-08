@@ -26,39 +26,78 @@ object ExportService {
     /** 渲染并保存 PNG（pattern=彩色带色号，symbol=符号版） */
     fun exportPng(
         context: Context,
+        results: List<PatternResult>,
+        projectName: String,
+        symbol: Boolean = false,
+    ): Exported = runCatching {
+        require(results.isNotEmpty()) { "无页数据" }
+        // 每页独立渲染（含标题栏），纵向拼接成一张长图
+        val parts = results.mapIndexed { pageIndex, r ->
+            val cellPx = defaultCellPx(r)
+            val titleHeight = if (symbol) 0 else (cellPx * 1.6f).toInt()
+            val rendered = if (symbol) {
+                ExportRenderer.renderSymbol(r, ExportRenderer.RenderOptions(cellPx = cellPx))
+            } else {
+                ExportRenderer.renderPattern(
+                    r,
+                    ExportRenderer.RenderOptions(
+                        cellPx = cellPx,
+                        showCodes = true,
+                        showGrid = true,
+                        titleHeightPx = titleHeight,
+                    ),
+                )
+            }
+            val bmp = rendered.toBitmap()
+            if (!symbol) {
+                val pageTag = if (results.size > 1) "  ·  第${pageIndex + 1}/${results.size}页" else ""
+                drawTitleBar(
+                    bmp,
+                    titleHeight,
+                    "$projectName  ·  ${r.palette.brandLabel}  ·  ${r.width}×${r.height}$pageTag",
+                    "共 ${r.cells.size} 格 / ${r.usage().size} 色",
+                )
+            }
+            bmp
+        }
+        val totalHeight = parts.sumOf { it.height }
+        val combined = Bitmap.createBitmap(parts[0].width, totalHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(combined)
+        var y = 0
+        for (part in parts) {
+            canvas.drawBitmap(part, 0f, y.toFloat(), null)
+            y += part.height
+            part.recycle()
+        }
+        val name = fileName(results.first(), if (symbol) "symbol" else "pattern", "png")
+        val uri = saveToDownloads(context, combined, name, "image/png")
+        combined.recycle()
+        Exported.FileReady(File(name), uri)
+    }.getOrElse { Exported.Failed(it.message ?: "导出失败") }
+
+    /** 单页导出（多页版本委托入口） */
+    fun exportPng(
+        context: Context,
         result: PatternResult,
         projectName: String,
         symbol: Boolean = false,
-        cellPx: Int = defaultCellPx(result),
+    ): Exported = exportPng(context, listOf(result), projectName, symbol)
+
+    /** 导出 .bpat 图纸文件（通用交换格式） */
+    fun exportBpat(
+        context: Context,
+        jsonText: String,
+        result: PatternResult,
     ): Exported = runCatching {
-        val titleHeight = if (symbol) 0 else (cellPx * 1.6f).toInt()
-        val rendered = if (symbol) {
-            ExportRenderer.renderSymbol(result, ExportRenderer.RenderOptions(cellPx = cellPx))
-        } else {
-            ExportRenderer.renderPattern(
-                result,
-                ExportRenderer.RenderOptions(
-                    cellPx = cellPx,
-                    showCodes = true,
-                    showGrid = true,
-                    titleHeightPx = titleHeight,
-                ),
-            )
-        }
-        val bitmap = rendered.toBitmap()
-        if (!symbol) {
-            drawTitleBar(
-                bitmap,
-                titleHeight,
-                "$projectName  ·  ${result.palette.brandLabel}  ·  ${result.width}×${result.height}",
-                "共 ${result.cells.size} 格 / ${result.usage().size} 色",
-            )
-        }
-        val name = fileName(result, if (symbol) "symbol" else "pattern", "png")
-        val uri = saveToDownloads(context, bitmap, name, "image/png")
-        bitmap.recycle()
+        val name = fileName(result, "bpat", "bpat")
+        val uri = saveBytesToDownloads(
+            context,
+            jsonText.toByteArray(Charsets.UTF_8),
+            name,
+            "application/octet-stream",
+        )
         Exported.FileReady(File(name), uri)
-    }.getOrElse { Exported.Failed(it.message ?: "导出失败") }
+    }.getOrElse { Exported.Failed(it.message ?: "bpat 导出失败") }
 
     /**
      * 保存到系统「下载」目录（用户能在文件管理器里直接看到，且不会被缓存清理）。
@@ -129,26 +168,15 @@ object ExportService {
         context: Context,
         result: PatternResult,
         projectName: String,
+    ): Exported = exportPdf(context, listOf(result), projectName)
+
+    /** 多页 PDF：每页图纸独立渲染切分，末尾附聚合清单页 */
+    fun exportPdf(
+        context: Context,
+        results: List<PatternResult>,
+        projectName: String,
     ): Exported = runCatching {
-        val cellPx = defaultCellPx(result)
-        val titleHeight = (cellPx * 1.6f).toInt()
-        val patternBmp = ExportRenderer
-            .renderPattern(
-                result,
-                ExportRenderer.RenderOptions(
-                    cellPx = cellPx,
-                    showCodes = true,
-                    showGrid = true,
-                    titleHeightPx = titleHeight,
-                ),
-            )
-            .toBitmap()
-        drawTitleBar(
-            patternBmp,
-            titleHeight,
-            "$projectName  ·  ${result.palette.brandLabel}  ·  ${result.width}×${result.height}",
-            "共 ${result.cells.size} 格 / ${result.usage().size} 色",
-        )
+        require(results.isNotEmpty()) { "无页数据" }
 
         // A4 @ 72dpi = 595 x 842 pt
         val pageW = 595
@@ -156,38 +184,61 @@ object ExportService {
         val doc = PdfDocument()
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-        // 按内容切分：整幅图纸若超过一页，按页高切片
-        val contentW = patternBmp.width
-        val contentH = patternBmp.height
-        val scale = (pageW - 32f) / contentW
-        val sliceH = ((pageH - 32f) / scale).toInt().coerceAtLeast(1)
-        var y = 0
-        var pageIndex = 0
-        while (y < contentH) {
-            val h = (contentH - y).coerceAtMost(sliceH)
-            val slice = Bitmap.createBitmap(patternBmp, 0, y, contentW, h)
-            val page = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pageIndex + 1).create())
-            val c: Canvas = page.canvas
-            val destW = contentW * scale
-            val destH = h * scale
-            c.drawBitmap(slice, null, android.graphics.RectF(16f, 16f, 16f + destW, 16f + destH), paint)
-            doc.finishPage(page)
-            slice.recycle()
-            y += h
-            pageIndex++
+        var docPageIndex = 0
+        for ((idx, r) in results.withIndex()) {
+            val cellPx = defaultCellPx(r)
+            val titleHeight = (cellPx * 1.6f).toInt()
+            val patternBmp = ExportRenderer
+                .renderPattern(
+                    r,
+                    ExportRenderer.RenderOptions(
+                        cellPx = cellPx,
+                        showCodes = true,
+                        showGrid = true,
+                        titleHeightPx = titleHeight,
+                    ),
+                )
+                .toBitmap()
+            val pageTag = if (results.size > 1) "  ·  第${idx + 1}/${results.size}页" else ""
+            drawTitleBar(
+                patternBmp,
+                titleHeight,
+                "$projectName  ·  ${r.palette.brandLabel}  ·  ${r.width}×${r.height}$pageTag",
+                "共 ${r.cells.size} 格 / ${r.usage().size} 色",
+            )
+
+            // 按内容切分：整幅图纸若超过一页，按页高切片
+            val contentW = patternBmp.width
+            val contentH = patternBmp.height
+            val scale = (pageW - 32f) / contentW
+            val sliceH = ((pageH - 32f) / scale).toInt().coerceAtLeast(1)
+            var y = 0
+            while (y < contentH) {
+                val h = (contentH - y).coerceAtMost(sliceH)
+                val slice = Bitmap.createBitmap(patternBmp, 0, y, contentW, h)
+                val page = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, docPageIndex + 1).create())
+                val c: Canvas = page.canvas
+                val destW = contentW * scale
+                val destH = h * scale
+                c.drawBitmap(slice, null, android.graphics.RectF(16f, 16f, 16f + destW, 16f + destH), paint)
+                doc.finishPage(page)
+                slice.recycle()
+                y += h
+                docPageIndex++
+            }
+            patternBmp.recycle()
         }
-        patternBmp.recycle()
 
         // 清单页
         val listPage = doc.startPage(
-            PdfDocument.PageInfo.Builder(pageW, pageH, pageIndex + 1).create(),
+            PdfDocument.PageInfo.Builder(pageW, pageH, docPageIndex + 1).create(),
         )
         val lp = Paint().apply {
             color = android.graphics.Color.BLACK
             isAntiAlias = true
         }
         var ty = 40f
-        for (line in ShoppingList.render(result, projectName).lines()) {
+        for (line in ShoppingList.render(results, projectName).lines()) {
             if (ty > pageH - 24) break
             val isTitle = line.startsWith("拼豆采购清单")
             lp.textSize = if (isTitle) 16f else 10f
@@ -203,7 +254,7 @@ object ExportService {
             bos.toByteArray()
         }
         doc.close()
-        val name = fileName(result, "print", "pdf")
+        val name = fileName(results.first(), "print", "pdf")
         val uri = saveBytesToDownloads(context, pdfBytes, name, "application/pdf")
         Exported.FileReady(File(name), uri)
     }.getOrElse { Exported.Failed(it.message ?: "PDF 导出失败") }
@@ -240,7 +291,12 @@ object ExportService {
 
     /** 分享纯文本清单 */
     fun shareList(context: Context, result: PatternResult, projectName: String) {
-        val text = ShoppingList.render(result, projectName)
+        shareList(context, listOf(result), projectName)
+    }
+
+    /** 分享多页聚合清单 */
+    fun shareList(context: Context, results: List<PatternResult>, projectName: String) {
+        val text = ShoppingList.render(results, projectName)
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
@@ -253,6 +309,7 @@ object ExportService {
     fun shareFile(context: Context, exported: Exported.FileReady) {
         val mime = when (exported.file.extension.lowercase()) {
             "pdf" -> "application/pdf"
+            "bpat" -> "application/octet-stream"
             else -> "image/png"
         }
         val intent = Intent(Intent.ACTION_SEND).apply {

@@ -22,20 +22,27 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Colorize
 import androidx.compose.material.icons.filled.FormatColorReset
+import androidx.compose.material.icons.filled.FormatPaint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,11 +51,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import com.pindou.app.core.editor.EditorEngine
@@ -104,8 +114,15 @@ fun EditorScreen(vm: AppViewModel) {
     val palette = vm.selectedPalette ?: return
 
     var showPaletteSheet by remember { mutableStateOf(false) }
+    var showManageSheet by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showResizeDialog by remember { mutableStateOf(false) }
     var longPressCell by remember { mutableStateOf<Int?>(null) }
     val transform = remember { CanvasTransform() }
+    // 页切换后重置画布视图，避免残留上一页的缩放位置错乱
+    androidx.compose.runtime.LaunchedEffect(engine.pageIndex, engine.width, engine.height) {
+        transform.reset()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -131,6 +148,9 @@ fun EditorScreen(vm: AppViewModel) {
                 IconButton(onClick = { vm.redoEditor() }, enabled = engine.canRedo) {
                     Icon(Icons.Filled.Redo, contentDescription = "重做")
                 }
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                }
                 TextButton(onClick = { vm.finishEditor() }) {
                     Text("完成")
                 }
@@ -152,11 +172,43 @@ fun EditorScreen(vm: AppViewModel) {
                 showGrid = vm.editorShowGrid,
                 revision = vm.editorRevision,
                 tool = vm.editorTool,
+                refImage = vm.refBitmap?.takeIf { vm.showRefOverlay }?.asImageBitmap(),
+                refAlpha = vm.refOpacity,
                 onTap = { cell -> handleTap(vm, engine, cell) },
                 onStrokeCell = { cell, session -> handleStrokeCell(vm, engine, cell, session) },
                 onLongPress = { cell -> longPressCell = cell },
                 onStrokeEnd = { vm.notifyEditorChanged() },
             )
+        }
+
+        // 页切换行（多页图纸）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.md),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "第 ${engine.pageIndex + 1}/${engine.pageCount} 页",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row {
+                TextButton(
+                    onClick = { vm.switchEditorPage(engine.pageIndex - 1) },
+                    enabled = engine.pageIndex > 0,
+                ) { Text("‹") }
+                TextButton(
+                    onClick = { vm.switchEditorPage(engine.pageIndex + 1) },
+                    enabled = engine.pageIndex < engine.pageCount - 1,
+                ) { Text("›") }
+                TextButton(onClick = { vm.addEditorPage(false) }) { Text("+ 新页") }
+                TextButton(onClick = { vm.addEditorPage(true) }) { Text("复制当前页") }
+                TextButton(
+                    onClick = { vm.removeEditorPage(engine.pageIndex) },
+                    enabled = engine.pageCount > 1,
+                ) { Text("删本页") }
+            }
         }
 
         // 工具行
@@ -183,6 +235,9 @@ fun EditorScreen(vm: AppViewModel) {
                 )
                 EditorToolButton(Icons.Filled.Brush, "画笔", vm.editorTool == EditorTool.PAINT) {
                     vm.editorTool = EditorTool.PAINT
+                }
+                EditorToolButton(Icons.Filled.FormatPaint, "油漆桶", vm.editorTool == EditorTool.FILL) {
+                    vm.editorTool = EditorTool.FILL
                 }
                 EditorToolButton(Icons.Filled.FormatColorReset, "橡皮", vm.editorTool == EditorTool.ERASE) {
                     vm.editorTool = EditorTool.ERASE
@@ -256,6 +311,168 @@ fun EditorScreen(vm: AppViewModel) {
         }
     }
 
+    // ⋮ 菜单
+    if (showMenu) {
+        AlertDialog(
+            onDismissRequest = { showMenu = false },
+            title = { Text("更多操作") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (vm.refBitmap != null) "参考图对比" else "参考图对比（无原图）",
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = vm.showRefOverlay,
+                            onCheckedChange = { vm.toggleRefOverlay() },
+                            enabled = vm.refBitmap != null,
+                        )
+                    }
+                    if (vm.showRefOverlay && vm.refBitmap != null) {
+                        Text("参考图透明度 ${(vm.refOpacity * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                        Slider(
+                            value = vm.refOpacity,
+                            onValueChange = { vm.updateRefOpacity(it) },
+                            valueRange = 0.05f..1f,
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            showMenu = false
+                            showManageSheet = true
+                        },
+                    ) { Text("色板管理（换品牌 / 合并相近色）") }
+                    TextButton(
+                        onClick = {
+                            showMenu = false
+                            showResizeDialog = true
+                        },
+                    ) { Text("改尺寸") }
+                    TextButton(
+                        onClick = {
+                            showMenu = false
+                            vm.exportBpatFile()
+                        },
+                    ) { Text("导出 .bpat 图纸文件") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showMenu = false }) { Text("关闭") }
+            },
+        )
+    }
+
+    // 改尺寸对话框
+    if (showResizeDialog) {
+        var w by remember { mutableStateOf(engine.width.toString()) }
+        var h by remember { mutableStateOf(engine.height.toString()) }
+        AlertDialog(
+            onDismissRequest = { showResizeDialog = false },
+            title = { Text("改尺寸") },
+            text = {
+                Column {
+                    Text(
+                        "内容居中保留；施工进度会因尺寸变化作废",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), modifier = Modifier.padding(top = Spacing.sm)) {
+                        OutlinedTextField(
+                            value = w,
+                            onValueChange = { w = it.filter { ch -> ch.isDigit() }.take(3) },
+                            label = { Text("宽") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = h,
+                            onValueChange = { h = it.filter { ch -> ch.isDigit() }.take(3) },
+                            label = { Text("高") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val nw = w.toIntOrNull() ?: 0
+                    val nh = h.toIntOrNull() ?: 0
+                    if (nw in 5..200 && nh in 5..200) {
+                        vm.resizeEditor(nw, nh)
+                        showResizeDialog = false
+                    }
+                }) { Text("应用") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResizeDialog = false }) { Text("取消") }
+            },
+        )
+    }
+
+    // 色板管理
+    if (showManageSheet) {
+        var mergeThreshold by remember { mutableFloatStateOf(3f) }
+        ModalBottomSheet(onDismissRequest = { showManageSheet = false }) {
+            Column(
+                Modifier
+                    .padding(Spacing.lg)
+                    .padding(bottom = Spacing.xl),
+                verticalArrangement = Arrangement.spacedBy(Spacing.md),
+            ) {
+                Text("换品牌色卡", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "全图按最近色重映射到所选品牌（仅列同规格）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    vm.palettes
+                        .filter { it.beadSize == palette.beadSize }
+                        .forEach { p ->
+                            val selected = p.brand == palette.brand
+                            TextButton(
+                                onClick = {
+                                    vm.applyPaletteRemap(p)
+                                    showManageSheet = false
+                                },
+                                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                                    contentColor = if (selected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                ),
+                            ) { Text(if (selected) "✓${p.brandLabel}" else p.brandLabel) }
+                        }
+                }
+
+                Text("合并相近色", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "ΔE 阈值 %.1f：阈值越大合并越激进".format(mergeThreshold),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Slider(
+                    value = mergeThreshold,
+                    onValueChange = { mergeThreshold = it },
+                    valueRange = 1f..10f,
+                )
+                Button(
+                    onClick = {
+                        vm.mergeSimilarEditorColors(mergeThreshold.toDouble())
+                        showManageSheet = false
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("按当前阈值合并") }
+            }
+        }
+    }
+
     // 长按格子菜单
     longPressCell?.let { cell ->
         val colorEntry = if (engine.cells[cell] >= 0) palette.colors[engine.cells[cell]] else null
@@ -302,6 +519,10 @@ private fun handleTap(vm: AppViewModel, engine: EditorEngine, cell: Int) {
                 vm.editorTool = EditorTool.PAINT
             }
         }
+        EditorTool.FILL -> {
+            // 油漆桶：整块同色区域填充为当前色（含空格区域）
+            if (engine.floodFill(cell, vm.editorColor)) vm.notifyEditorChanged()
+        }
         EditorTool.PAINT -> {
             val s = engine.startStroke()
             s.setCell(cell, vm.editorColor)
@@ -327,7 +548,8 @@ private fun handleStrokeCell(
     when (vm.editorTool) {
         EditorTool.PAINT -> session.setCell(cell, vm.editorColor)
         EditorTool.ERASE -> session.setCell(cell, -1)
-        EditorTool.PICKER -> {}
+        // 油漆桶按点击触发，拖动不连续填充
+        EditorTool.FILL, EditorTool.PICKER -> {}
     }
 }
 
@@ -357,6 +579,8 @@ private fun EditorCanvas(
     showGrid: Boolean,
     revision: Int,
     tool: EditorTool,
+    refImage: ImageBitmap?,
+    refAlpha: Float,
     onTap: (Int) -> Unit,
     onStrokeCell: (Int, EditorEngine.StrokeSession) -> Unit,
     onLongPress: (Int) -> Unit,
@@ -444,11 +668,11 @@ private fun EditorCanvas(
                             ).toFloat()
                             if (!moved && delta > viewConfiguration.touchSlop) {
                                 moved = true
-                                if (!longPressed && tool != EditorTool.PICKER) {
+                                if (!longPressed && tool != EditorTool.PICKER && tool != EditorTool.FILL) {
                                     stroke = engine.startStroke()
                                 }
                             }
-                            if (!isTransform && moved && !longPressed && tool != EditorTool.PICKER) {
+                            if (!isTransform && moved && !longPressed && tool != EditorTool.PICKER && tool != EditorTool.FILL) {
                                 stroke = stroke ?: engine.startStroke()
                                 // 路径插值：快速划动时补格
                                 val stepPx = max(2f, cellPx(canvas, transform, engine) / 2f)
@@ -494,6 +718,8 @@ private fun EditorCanvas(
                 }
             },
     ) {
+        // 订阅引擎 revision：撤销/重做/页操作等不经 CanvasTransform 的变更也触发重绘
+        revision
         val canvas = Offset(size.width, size.height)
         val cell = cellPx(canvas, transform, engine)
         val origin = drawOrigin(canvas, transform, engine)
@@ -532,6 +758,21 @@ private fun EditorCanvas(
                     }
                 }
             }
+        }
+
+        // 参考图叠加：铺在格子上方、色号下方，透明度可调
+        if (refImage != null && refAlpha > 0f) {
+            drawImage(
+                image = refImage,
+                srcOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                srcSize = androidx.compose.ui.unit.IntSize(refImage.width, refImage.height),
+                dstOffset = androidx.compose.ui.unit.IntOffset(origin.x.toInt(), origin.y.toInt()),
+                dstSize = androidx.compose.ui.unit.IntSize(
+                    (engine.width * cell).toInt().coerceAtLeast(1),
+                    (engine.height * cell).toInt().coerceAtLeast(1),
+                ),
+                alpha = refAlpha,
+            )
         }
 
         if (showGrid) {

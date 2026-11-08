@@ -19,9 +19,11 @@ import com.pindou.app.core.data.ProjectEntity
 import com.pindou.app.core.data.ProjectRepository
 import com.pindou.app.core.data.SettingsStore
 import com.pindou.app.core.editor.EditorEngine
+import com.pindou.app.core.editor.PaletteOps
 import com.pindou.app.core.image.CropRect
 import com.pindou.app.core.image.ImageTransforms
 import com.pindou.app.core.pattern.GenerationStage
+import com.pindou.app.core.pattern.BpatCodec
 import com.pindou.app.core.pattern.GeneratorOptions
 import com.pindou.app.core.pattern.PatternGenerator
 import com.pindou.app.core.pattern.PatternResult
@@ -30,12 +32,16 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.max
+import kotlin.math.min
+import java.io.File
+import java.io.FileOutputStream
 
 /** 页面导航（线性流程，M5 引入项目库后再考虑导航库） */
 enum class Screen { HOME, CROP, PARAMS, PREVIEW, EDITOR, CONSTRUCTION }
 
 /** 编辑工具 */
-enum class EditorTool { PAINT, ERASE, PICKER }
+enum class EditorTool { PAINT, ERASE, PICKER, FILL }
 
 /** 生成过程中的 UI 状态 */
 sealed interface GenState {
@@ -126,6 +132,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // 施工模式
     var construction by mutableStateOf<ConstructionState?>(null)
+
+    // 多页图纸：编辑器内产生页；空列表 = 只有 genState 里的单页结果
+    var projectPages: List<IntArray> = emptyList()
+        private set
+
+    // 参考图对比：原图叠加显示在格子上，透明度可调
+    var refBitmap by mutableStateOf<Bitmap?>(null)
+        private set
+    var showRefOverlay by mutableStateOf(false)
+    var refOpacity by mutableFloatStateOf(0.5f)
+
+    // 项目库筛选
+    var libraryQuery by mutableStateOf("")
+    var libraryFavOnly by mutableStateOf(false)
+    /** null = 全部；否则按专辑名过滤 */
+    var libraryAlbum by mutableStateOf<String?>(null)
 
     // 编辑器
     var editor by mutableStateOf<EditorEngine?>(null)
@@ -354,6 +376,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun generate() {
         val pixels = imagePixels ?: return
         val palette = selectedPalette ?: return
+        projectPages = emptyList()
         genState = GenState.Running(GenerationStage.DOWNSAMPLE, 0f)
         viewModelScope.launch(Dispatchers.Default) {
             try {
@@ -420,6 +443,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** 存档用名称：参数页可自定义，留空回退默认名 */
     private fun displayName(): String = projectName.trim().ifBlank { "未命名图纸" }
 
+    /** 各页包装成 PatternResult（预览/导出用；调色板与尺寸全页一致） */
+    fun currentPages(): List<PatternResult> {
+        val result = (genState as? GenState.Done)?.result ?: return emptyList()
+        val pages = projectPages.ifEmpty { listOf(result.cells) }
+        return pages.map { PatternResult(result.width, result.height, it, result.palette, result.elapsedMs) }
+    }
+
     /** 生成完成后自动建档/更新保存 */
     private suspend fun saveAfterGenerate(result: PatternResult) {
         val id = currentProjectId
@@ -428,11 +458,38 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 id, result.width, result.height,
                 result.cells, BooleanArray(result.cells.size), result.palette,
             )
+            // 重新生成 = 图纸整体变化：照片来源则更新参考图，无照片（空白/文字）则清除
+            if (imagePreview != null && textSource == null) {
+                saveRefImage(id)
+            } else {
+                repository.setRefPath(id, null)
+                refBitmap = null
+            }
             toast = "修改已保存"
         } else {
             currentProjectId = repository.create(displayName(), result)
             projectName = displayName()
+            if (imagePreview != null && textSource == null) {
+                saveRefImage(currentProjectId!!)
+            }
             toast = "已保存到项目库"
+        }
+    }
+
+    /** 参考原图落盘：长边压到 ≤1024px 的 JPEG，供编辑器对比叠加 */
+    private suspend fun saveRefImage(id: Long) {
+        val bmp = imagePreview ?: return
+        runCatching {
+            val dir = File(getApplication<Application>().filesDir, "refs").apply { mkdirs() }
+            val file = File(dir, "ref_$id.jpg")
+            val scale = min(1f, 1024f / max(bmp.width, bmp.height))
+            val scaled = if (scale < 1f) {
+                Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt().coerceAtLeast(1), (bmp.height * scale).toInt().coerceAtLeast(1), true)
+            } else bmp
+            FileOutputStream(file).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+            if (scaled !== bmp) scaled.recycle()
+            repository.setRefPath(id, file.absolutePath)
+            refBitmap = bmp
         }
     }
 
@@ -443,9 +500,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val h = gridH.coerceIn(5, 200)
         val cells = IntArray(w * h) { -1 }
         genState = GenState.Done(PatternResult(w, h, cells, palette, 0))
+        projectPages = listOf(cells)
         editor = EditorEngine(w, h, cells)
         currentProjectId = null
         projectName = "空白画布 ${w}×${h}"
+        refBitmap = null
+        showRefOverlay = false
         editorRevision++
         screen = Screen.EDITOR
     }
@@ -455,6 +515,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val palette = selectedPalette ?: return
         if (text.isBlank()) return
         textSource = text
+        projectPages = emptyList()
         genState = GenState.Running(GenerationStage.DOWNSAMPLE, 0f)
         viewModelScope.launch(Dispatchers.Default) {
             try {
@@ -523,15 +584,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 val cells = GridCodec.decodeCells(entity.cells)
-                if (cells.size != entity.width * entity.height) {
-                    lastError = "打开失败：数据尺寸不符（${cells.size} vs ${entity.width * entity.height}）"
+                val pageLen = entity.width * entity.height
+                val pageCount = entity.pages.coerceAtLeast(1)
+                if (cells.size != pageLen * pageCount) {
+                    lastError = "打开失败：数据尺寸不符（${cells.size} vs ${pageLen * pageCount}）"
                     return@launch
                 }
-                val locks = GridCodec.decodeLocks(entity.locked)
-                val result = PatternResult(entity.width, entity.height, cells, palette, 0)
-                val engine = EditorEngine(entity.width, entity.height, cells)
-                locks.forEachIndexed { i, b -> if (i < engine.locked.size && b) engine.setLocked(i, true) }
+                val pages = chunkInts(cells, pageLen)
+                val lockPages = run {
+                    val flat = GridCodec.decodeLocks(entity.locked)
+                    if (flat.size == pageLen * pageCount) {
+                        chunkBooleans(flat, pageLen)
+                    } else {
+                        // 旧数据锁定长度不符：按无锁处理
+                        pages.map { BooleanArray(pageLen) }
+                    }
+                }
+                val result = PatternResult(entity.width, entity.height, pages[0], palette, 0)
+                val engine = EditorEngine(entity.width, entity.height, pages, lockPages)
                 genState = GenState.Done(result)
+                projectPages = pages
+                refBitmap = entity.refPath?.let { path ->
+                    withContext(Dispatchers.IO) { runCatching { BitmapFactory.decodeFile(path) }.getOrNull() }
+                }
                 editor = engine
                 currentProjectId = entity.id
                 projectName = entity.name
@@ -561,6 +636,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         projectName = "未命名图纸"
         genState = GenState.Idle
         editor = null
+        projectPages = emptyList()
+        refBitmap = null
+        showRefOverlay = false
         imagePixels = null
         imagePreview = null
         imageW = 0
@@ -588,7 +666,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** 从预览进入编辑器：以当前结果初始化引擎（重新生成会重建） */
     fun enterEditor() {
         val result = (genState as? GenState.Done)?.result ?: return
-        editor = EditorEngine(result.width, result.height, result.cells)
+        editor = EditorEngine(result.width, result.height, projectPages.ifEmpty { listOf(result.cells) })
         editorRevision++
         screen = Screen.EDITOR
     }
@@ -597,26 +675,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun finishEditor() {
         val engine = editor ?: return
         val current = (genState as? GenState.Done)?.result ?: return
-        val updated = current.copy(cells = engine.cells.copyOf())
+        val pages = engine.pages.map { it.copyOf() }
+        // 编辑器里可能改过尺寸：以引擎当前尺寸为准重建结果
+        val updated = if (engine.width != current.width || engine.height != current.height) {
+            PatternResult(engine.width, engine.height, pages[0], current.palette, current.elapsedMs)
+        } else {
+            current.copy(cells = pages[0])
+        }
+        projectPages = pages
         genState = GenState.Done(updated)
         editor = null
         val id = currentProjectId
         if (id != null) {
             viewModelScope.launch {
-                // 编辑是局部修改：保留施工进度，只写回格数据与锁
+                // 编辑是局部修改：保留施工进度，只写回格数据与锁（多页平铺）
                 repository.updateCells(
                     id = id,
                     width = updated.width,
                     height = updated.height,
-                    cells = updated.cells,
-                    locked = engine.locked,
+                    cells = pages.reduce { acc, cur -> acc + cur },
+                    locked = engine.locks.reduce { acc, cur -> acc + cur },
                     palette = updated.palette,
+                    pages = pages.size,
                 )
                 toast = "修改已保存"
             }
         } else {
             viewModelScope.launch {
-                currentProjectId = repository.create(displayName(), updated, engine.locked)
+                currentProjectId = repository.importProject(
+                    displayName(),
+                    updated.width,
+                    updated.height,
+                    updated.palette,
+                    pages,
+                    engine.locks,
+                )
             }
         }
         screen = Screen.PREVIEW
@@ -627,9 +720,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val result = (genState as? GenState.Done)?.result ?: return
         viewModelScope.launch {
             val entity = currentProjectId?.let { repository.get(it) }
-            val done = entity?.doneCells?.let { bytes ->
-                BooleanArray(bytes.size) { bytes[it] != 0.toByte() }
-            } ?: BooleanArray(result.cells.size)
+            // 编辑器改过尺寸后进度数组长度会失配：失配即作废旧进度、游标归零
+            val sizeOk = entity?.doneCells?.size == result.cells.size
+            val done = if (sizeOk) {
+                BooleanArray(entity!!.doneCells.size) { entity.doneCells[it] != 0.toByte() }
+            } else {
+                BooleanArray(result.cells.size)
+            }
             construction = ConstructionState(
                 width = result.width,
                 height = result.height,
@@ -639,7 +736,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     ConstructionState.Orientation.ROW
                 },
-                cursor = entity?.buildCursor ?: 0,
+                cursor = if (sizeOk) entity?.buildCursor ?: 0 else 0,
             )
             screen = Screen.CONSTRUCTION
         }
@@ -669,4 +766,273 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         editor?.redo()
         notifyEditorChanged()
     }
+
+    // ---------- 编辑器：页操作 ----------
+
+    /** 切换页 */
+    fun switchEditorPage(index: Int) {
+        editor?.setPage(index)
+        notifyEditorChanged()
+    }
+
+    /** 新增一页（可复制当前页） */
+    fun addEditorPage(copyCurrent: Boolean) {
+        editor?.addPage(copyCurrent)
+        notifyEditorChanged()
+    }
+
+    /** 删除一页（至少保留一页） */
+    fun removeEditorPage(index: Int) {
+        editor?.removePage(index)
+        notifyEditorChanged()
+    }
+
+    /** 改尺寸：所有页内容居中保留 */
+    fun resizeEditor(newWidth: Int, newHeight: Int) {
+        val engine = editor ?: return
+        engine.resize(newWidth.coerceIn(5, 200), newHeight.coerceIn(5, 200))
+        notifyEditorChanged()
+    }
+
+    /** 参考图叠加开关 */
+    fun toggleRefOverlay() {
+        if (refBitmap != null) showRefOverlay = !showRefOverlay
+    }
+
+    fun updateRefOpacity(value: Float) {
+        refOpacity = value.coerceIn(0.05f, 1f)
+    }
+
+    // ---------- 编辑器：色板操作 ----------
+
+    /** 换品牌：按 ΔE2000 最近色整图重映射并立即持久化 */
+    fun applyPaletteRemap(newPalette: BeadPalette) {
+        val engine = editor ?: return
+        val current = (genState as? GenState.Done)?.result ?: return
+        val remapped = PaletteOps.remapToPalette(engine.pages, current.palette, newPalette)
+        editor = EditorEngine(engine.width, engine.height, remapped, engine.locks, engine.pageIndex)
+        genState = GenState.Done(
+            PatternResult(engine.width, engine.height, remapped[0], newPalette, current.elapsedMs),
+        )
+        projectPages = remapped
+        selectedPalette = newPalette
+        val id = currentProjectId
+        if (id != null) {
+            viewModelScope.launch {
+                repository.updateCells(
+                    id = id,
+                    width = engine.width,
+                    height = engine.height,
+                    cells = remapped.reduce { acc, cur -> acc + cur },
+                    locked = engine.locks.reduce { acc, cur -> acc + cur },
+                    palette = newPalette,
+                    pages = remapped.size,
+                )
+            }
+        }
+        notifyEditorChanged()
+        toast = "已换用「${newPalette.brandLabel}」色卡"
+    }
+
+    /** 合并相近色号（ΔE 阈值），整图替换并立即持久化 */
+    fun mergeSimilarEditorColors(maxDeltaE: Double) {
+        val engine = editor ?: return
+        val current = (genState as? GenState.Done)?.result ?: return
+        val merged = PaletteOps.mergeSimilarCodes(engine.pages, current.palette, maxDeltaE)
+        editor = EditorEngine(engine.width, engine.height, merged, engine.locks, engine.pageIndex)
+        genState = GenState.Done(
+            PatternResult(engine.width, engine.height, merged[0], current.palette, current.elapsedMs),
+        )
+        projectPages = merged
+        val id = currentProjectId
+        if (id != null) {
+            viewModelScope.launch {
+                repository.updateCells(
+                    id = id,
+                    width = engine.width,
+                    height = engine.height,
+                    cells = merged.reduce { acc, cur -> acc + cur },
+                    locked = engine.locks.reduce { acc, cur -> acc + cur },
+                    palette = current.palette,
+                    pages = merged.size,
+                )
+            }
+        }
+        notifyEditorChanged()
+        val before = engine.pages.sumOf { p -> p.count { it >= 0 } }
+        val usedBefore = engine.pages.flatMap { p -> p.filter { it >= 0 } }.distinct().size
+        val usedAfter = merged.flatMap { p -> p.filter { it >= 0 } }.distinct().size
+        toast = "已合并相近色：$usedBefore 色 → $usedAfter 色（$before 格参与）"
+    }
+
+    // ---------- .bpat 导入导出 ----------
+
+    /** 导出当前图纸为 .bpat（含全部页） */
+    fun exportBpatFile() {
+        val result = (genState as? GenState.Done)?.result ?: return
+        val pages = editor?.pages ?: projectPages.ifEmpty { listOf(result.cells) }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val entity = currentProjectId?.let { repository.get(it) }
+                val json = BpatCodec.encode(
+                    title = projectName,
+                    album = entity?.album ?: "",
+                    brand = result.palette.brand,
+                    beadSizeTag = result.palette.beadSize.name,
+                    width = result.width,
+                    height = result.height,
+                    pages = pages,
+                    paletteColors = result.palette.colors.map {
+                        BpatCodec.BpatColorSource(
+                            it.code,
+                            String.format("#%06X", it.argb and 0xFFFFFF),
+                            it.name,
+                        )
+                    },
+                )
+                val out = com.pindou.app.core.export.ExportService.exportBpat(
+                    getApplication(), json, result,
+                )
+                withContext(Dispatchers.Main) {
+                    when (out) {
+                        is com.pindou.app.core.export.ExportService.Exported.FileReady ->
+                            toast = "已导出 ${out.file.name}"
+                        is com.pindou.app.core.export.ExportService.Exported.Failed ->
+                            lastError = "导出失败：${out.message}"
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { lastError = "导出失败：${e.message}" }
+            }
+        }
+    }
+
+    /** 导入 .bpat：落到项目库（不自动打开） */
+    fun importBpat(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val text = getApplication<Application>().contentResolver.openInputStream(uri)
+                    ?.use { it.readBytes().toString(Charsets.UTF_8) }
+                    ?: error("无法读取文件")
+                val data = BpatCodec.decode(text)
+                val loaded = ensurePalettes()
+                if (loaded.isEmpty()) error("没有可用色卡")
+                val size = com.pindou.app.core.palette.BeadSize.fromTag(data.beadSizeTag)
+                val target = loaded.firstOrNull { it.brand == data.brand && it.beadSize == size }
+                    ?: loaded.firstOrNull { it.brand == data.brand }
+                    ?: loaded.firstOrNull { it.beadSize == size }
+                    ?: loaded.first()
+                // 缺失色号用全色卡 Lab 最近匹配兜底
+                val colorIndex = IntArray(data.colors.size) { i ->
+                    val c = data.colors[i]
+                    val local = target.indexOfCode(c.code)
+                    if (local >= 0) {
+                        local
+                    } else {
+                        com.pindou.app.core.color.ColorConversions.argbToLab(c.hex)
+                            .let { target.nearestIndex(it) }
+                            .takeIf { it >= 0 } ?: 0
+                    }
+                }
+                val pages = data.pages.map { page ->
+                    IntArray(page.size) { i -> if (page[i] >= 0) colorIndex[page[i]] else -1 }
+                }
+                repository.importProject(
+                    data.title.ifBlank { "导入图纸" },
+                    data.width,
+                    data.height,
+                    target,
+                    pages,
+                    pages.map { BooleanArray(it.size) },
+                    data.album,
+                )
+                withContext(Dispatchers.Main) { toast = "已导入「${data.title.ifBlank { "图纸" }}」" }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { lastError = "导入失败：${e.message ?: e.javaClass.simpleName}" }
+            }
+        }
+    }
+
+    // ---------- 项目库：筛选 / 收藏 / 专辑 / 复刻 ----------
+
+    /** 按搜索词/收藏/专辑过滤（库页组合使用） */
+    fun filteredProjects(all: List<ProjectEntity>): List<ProjectEntity> {
+        val q = libraryQuery.trim()
+        return all.filter { p ->
+            (q.isEmpty() || p.name.contains(q, ignoreCase = true)) &&
+                (!libraryFavOnly || p.fav) &&
+                (libraryAlbum == null || p.album == libraryAlbum)
+        }
+    }
+
+    /** 已用到的专辑名（供筛选 chips） */
+    fun albumNames(all: List<ProjectEntity>): List<String> =
+        all.map { it.album }.filter { it.isNotBlank() }.distinct()
+
+    fun setFavProject(entity: ProjectEntity, fav: Boolean) {
+        viewModelScope.launch { repository.setFav(entity.id, fav) }
+    }
+
+    fun setAlbumProject(entity: ProjectEntity, album: String) {
+        viewModelScope.launch { repository.setAlbum(entity.id, album) }
+    }
+
+    /** 复刻项目：全量拷贝为新项目，进度清零，重新开始拼 */
+    fun duplicateProject(entity: ProjectEntity) {
+        viewModelScope.launch {
+            try {
+                val loaded = ensurePalettes()
+                val palette = loaded.firstOrNull { it.brand == entity.paletteBrand } ?: loaded.first()
+                val pageLen = entity.width * entity.height
+                val cells = GridCodec.decodeCells(entity.cells)
+                val pageCount = entity.pages.coerceAtLeast(1)
+                require(cells.size == pageLen * pageCount) { "数据尺寸不符" }
+                val pages = chunkInts(cells, pageLen)
+                val locksFlat = GridCodec.decodeLocks(entity.locked)
+                val locks = if (locksFlat.size == pageLen * pageCount) {
+                    chunkBooleans(locksFlat, pageLen)
+                } else {
+                    pages.map { BooleanArray(pageLen) }
+                }
+                repository.importProject(
+                    "${entity.name} 复刻",
+                    entity.width,
+                    entity.height,
+                    palette,
+                    pages,
+                    locks,
+                    entity.album,
+                    entity.thumbnailPath,
+                )
+                toast = "已复刻「${entity.name}」"
+            } catch (e: Exception) {
+                lastError = "复刻失败：${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+    }
+
+    // ---------- 内部工具 ----------
+
+    /** 色卡按需加载（首次打开项目/复刻/导入时可能尚未就绪） */
+    private suspend fun ensurePalettes(): List<BeadPalette> {
+        if (palettes.isNotEmpty()) return palettes
+        val loaded = withContext(Dispatchers.IO) { PaletteAssets.loadAll(getApplication()) }
+        if (loaded.isNotEmpty()) {
+            palettes = loaded
+            if (selectedPalette == null) {
+                selectedPalette = loaded.firstOrNull { it.brand == "MARD" } ?: loaded.first()
+            }
+        }
+        return loaded
+    }
+
+    private fun chunkInts(arr: IntArray, size: Int): List<IntArray> =
+        List((arr.size + size - 1) / size) { i ->
+            arr.copyOfRange(i * size, minOf((i + 1) * size, arr.size))
+        }
+
+    private fun chunkBooleans(arr: BooleanArray, size: Int): List<BooleanArray> =
+        List((arr.size + size - 1) / size) { i ->
+            arr.copyOfRange(i * size, minOf((i + 1) * size, arr.size))
+        }
 }
