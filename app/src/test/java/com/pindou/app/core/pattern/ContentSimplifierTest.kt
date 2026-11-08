@@ -73,4 +73,22 @@ class ContentSimplifierTest {
         ContentSimplifier.simplify(px, 2, 2, ContentSimplifier.Mode.CARTOON, tileSize = 0)
         ContentSimplifier.simplify(px, 2, 2, ContentSimplifier.Mode.CARTOON, tileSize = 999)
     }
+
+    @Test
+    fun `简化力度与目标网格联动`() {
+        // 100x100 源图，左半黑噪声右半白，目标 10x10 → tile=10，整块扁平化后只剩两色
+        val w = 100
+        val h = 100
+        val pixels = IntArray(w * h) { i ->
+            val x = i % w
+            if (x < 50) {
+                if (i % 2 == 0) 0xFF000000.toInt() else 0xFF111111.toInt() // 黑噪声
+            } else 0xFFFFFFFF.toInt()
+        }
+        val out = ContentSimplifier.simplifyForGrid(
+            pixels, w, h, ContentSimplifier.Mode.CARTOON, 10, 10,
+        )
+        val colors = out.distinct()
+        assertEquals(2, colors.size)
+    }
 }

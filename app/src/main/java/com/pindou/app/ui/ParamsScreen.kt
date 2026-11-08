@@ -295,7 +295,7 @@ fun ParamsScreen(vm: AppViewModel) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 Text("内容简化", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "先把图片保边去细节再转色号，让主体轮廓更突出、细节噪点更少",
+                    "先把照片简化成干净色块再转色号（默认卡通化）。简化的粗细自动跟随网格大小",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

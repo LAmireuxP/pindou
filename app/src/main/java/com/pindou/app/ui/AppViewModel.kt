@@ -125,7 +125,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var dithering by mutableStateOf(false)
     var removeBackground by mutableStateOf(false)
     var backgroundTolerance by mutableFloatStateOf(12f)
-    var contentMode by mutableStateOf(com.pindou.app.core.pattern.ContentSimplifier.Mode.OFF)
+    // 默认卡通化：先得到简化图再逐格转换，比 1:1 复刻照片的效果好得多
+    var contentMode by mutableStateOf(com.pindou.app.core.pattern.ContentSimplifier.Mode.CARTOON)
 
     var genState by mutableStateOf<GenState>(GenState.Idle)
         private set

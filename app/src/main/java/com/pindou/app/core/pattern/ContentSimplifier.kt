@@ -3,6 +3,7 @@ package com.pindou.app.core.pattern
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * 图片内容简化：在进入降采样前对源像素做保边平滑，减少细节噪点、保留主体轮廓。
@@ -21,6 +22,26 @@ import kotlin.math.min
 object ContentSimplifier {
 
     enum class Mode { OFF, CARTOON, EDGE }
+
+    /**
+     * 简化力度与目标网格联动的入口：块大小 ≈ 源图 / 网格，
+     * 让"块内扁平化"天然对齐最终格子 —— 1:1 采样感消失。
+     * [gridW]/[gridH] ≤ 0 时退回固定 [tileSize]。
+     */
+    fun simplifyForGrid(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        mode: Mode,
+        gridW: Int,
+        gridH: Int,
+    ): IntArray {
+        val tile = if (gridW > 0 && gridH > 0 && width > 0) {
+            ((width.toDouble() / gridW + height.toDouble() / gridH) / 2.0)
+                .roundToInt().coerceIn(4, 48)
+        } else 8
+        return simplify(pixels, width, height, mode, tile)
+    }
 
     fun simplify(
         pixels: IntArray,

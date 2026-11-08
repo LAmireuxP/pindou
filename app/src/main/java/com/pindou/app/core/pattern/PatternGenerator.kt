@@ -18,6 +18,8 @@ data class GeneratorOptions(
     val saliencyDeltaE: Double = 15.0,  // 显著细节与主导色的最小 ΔE；0 = 关闭检测
     val saliencyFraction: Double = 0.15, // 显著细节色块的最小像素占比
     val contentMode: ContentSimplifier.Mode = ContentSimplifier.Mode.OFF, // 内容简化（前置）
+    val regionCleanupEnabled: Boolean = true, // 区域清理：小面积连通碎块并入邻域
+    val regionMinArea: Int? = null,           // null = 按格数自适应
 )
 
 /** 生成结果：cells 为色卡索引（-1 = 空格），与 palette 配套使用 */
@@ -59,7 +61,10 @@ object PatternGenerator {
         val startNanos = System.nanoTime()
         // ⓪ 内容简化（前置）：保边去细节，让降采样面对的是已扁平化的图
         val workPixels = if (options.contentMode != ContentSimplifier.Mode.OFF) {
-            ContentSimplifier.simplify(pixels, srcW, srcH, options.contentMode)
+            // 简化力度与目标网格联动：块 ≈ 源图/网格，先得到"简化过的图"再逐格转
+            ContentSimplifier.simplifyForGrid(
+                pixels, srcW, srcH, options.contentMode, options.gridW, options.gridH,
+            )
         } else pixels
         // ① 主导色降采样 + 显著细节检测（眼睛、高光等小面积高对比色块优先保留）
         onStage(GenerationStage.DOWNSAMPLE, 0f)
@@ -114,8 +119,20 @@ object PatternGenerator {
                 cells, options.gridW, options.gridH,
                 paletteArgbs = palette.colors.map { it.argb },
             )
-            onStage(GenerationStage.CLEAN, 1f)
+            onStage(GenerationStage.CLEAN, 0.5f)
         }
+
+        // ⑤b 区域清理：照片纹理残留的小面积连通碎块整块并入邻接色块（噪感主要来源）
+        if (options.regionCleanupEnabled) {
+            val minArea = options.regionMinArea ?: RegionCleaner.adaptiveMinArea(
+                options.gridW * options.gridH,
+            )
+            cleaned = RegionCleaner.clean(
+                cleaned, options.gridW, options.gridH, minArea,
+                palette.colors.map { it.argb },
+            )
+        }
+        onStage(GenerationStage.CLEAN, 1f)
 
         // ⑥ 相似色号合并：近同色号并入常用方，消除渐变区的跳号噪点
         if (options.similarCodeMaxDeltaE > 0.0) {
