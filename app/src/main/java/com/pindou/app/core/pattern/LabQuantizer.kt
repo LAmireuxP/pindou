@@ -95,7 +95,7 @@ object LabQuantizer {
                 for (s in 0 until SHORTLIST) {
                     val idx = shortlist[base + s]
                     if (idx < 0) continue
-                    val d = Ciede2000.deltaE(cell, palette.colors[idx].lab)
+                    val d = palette.matchScore(cell, palette.colors[idx])
                     if (d < bestD) {
                         bestD = d
                         best = s
@@ -128,8 +128,13 @@ object LabQuantizer {
             val chroma2 = a * a + b * b
             // 两级判据：真正的中性白（口鼻、眼白、高光）不看位置一律吸白；
             // 带轻微粉调的浅色（背景光晕）只有离主体足够远才算背景。
+            //
+            // bgWhite 的下限从 88 收到 94：贴纸图的内耳、脸颊阴影常是 L≈88~92
+            // 的中性灰，88 会让整块灰先被吸成白，只剩描边旁几个零散灰点，
+            // 再被色卡映射成冷灰/蓝灰——就是"左耳那几颗蓝点"。收到 94 之后
+            // 只有接近纯白的才吸，灰色整片进色卡映射，形状才留得住。
             val pureWhite = l >= 96f && chroma2 <= 36f
-            val bgWhite = bgDistance[i] > BG_RADIUS && l >= 88f && chroma2 <= 256f
+            val bgWhite = bgDistance[i] > BG_RADIUS && l >= WHITE_FLOOR && chroma2 <= 256f
             cells[i] = if (whiteIdx >= 0 && (pureWhite || bgWhite)) {
                 whiteIdx
             } else {
@@ -157,6 +162,9 @@ object LabQuantizer {
     /** 判断"背景"时与最近高彩度格子的距离下限（切比雪夫距离，格） */
     private const val BG_RADIUS = 3
 
+    /** 浅色归一的白度下限（Lab L）：低于此值的灰要按色卡灰保留 */
+    private const val WHITE_FLOOR = 94f
+
     /** 每簇参与投票的候选色号数：8 个足够覆盖簇内混色的分裂，再多只是浪费 */
     private const val SHORTLIST = 8
 
@@ -172,7 +180,7 @@ object LabQuantizer {
         val idxs = IntArray(SHORTLIST) { -1 }
         for (i in palette.colors.indices) {
             if (palette.colors[i].code in excludedCodes) continue
-            val d = Ciede2000.deltaE(center, palette.colors[i].lab)
+            val d = palette.matchScore(center, palette.colors[i])
             if (d >= dist[SHORTLIST - 1]) continue
             var p = SHORTLIST - 1
             while (p > 0 && dist[p - 1] > d) {

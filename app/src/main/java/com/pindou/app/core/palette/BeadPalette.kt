@@ -4,6 +4,7 @@ import com.pindou.app.core.color.Ciede2000
 import com.pindou.app.core.color.ColorConversions
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.math.sqrt
 
 /** 豆子规格：5mm 普通豆 / 2.6mm 小豆 */
 enum class BeadSize(val pitchMm: Double) {
@@ -57,13 +58,48 @@ class BeadPalette(
         var bestDelta = Double.MAX_VALUE
         for (i in colors.indices) {
             if (colors[i].code in excludedCodes) continue
-            val d = Ciede2000.deltaE(lab, colors[i].lab)
+            val d = matchScore(lab, colors[i])
             if (d < bestDelta) {
                 bestDelta = d
                 best = i
             }
         }
         return best
+    }
+
+    /**
+     * 色卡匹配评分 = CIEDE2000 + 中性色相收敛。
+     *
+     * CIEDE2000 在低彩度区对色相几乎不敏感：浅灰（a≈b≈0）和浅蓝灰
+     * （a≈-1, b≈-6）算出来的 ΔE 只有 2~3，于是内耳的灰会被选成冷灰/蓝灰，
+     * 拼出来就是一圈脏蓝点。这里对"源色接近中性"的情况按目标彩度加罚：
+     * 源彩度越低、目标偏色越重，罚分越高，够把蓝灰压到真正的中性灰后面。
+     *
+     * 彩度 ≥ [NEUTRAL_CHROMA] 的源色（粉、绿、蓝）走原 ΔE，不受影响。
+     */
+    fun matchScore(src: FloatArray, entry: Entry): Double {
+        val d = Ciede2000.deltaE(src, entry.lab)
+        val sa = src[1]
+        val sb = src[2]
+        val sc = sqrt(sa * sa + sb * sb)
+        if (sc >= NEUTRAL_CHROMA) return d
+
+        val da = entry.lab[1]
+        val db = entry.lab[2]
+        val dc = sqrt(da * da + db * db)
+        val drift = (dc - sc).coerceAtLeast(0f)
+        if (drift <= 0f) return d
+        // sc=0 满权重；sc 接近阈值时衰减到 0，避免浅粉被误判成"灰"
+        val weight = NEUTRAL_PENALTY * (1f - sc / NEUTRAL_CHROMA)
+        return d + drift * weight
+    }
+
+    private companion object {
+        /** 低于此彩度视为中性色（灰/白/黑），需要防色相漂移 */
+        const val NEUTRAL_CHROMA = 7f
+
+        /** 每单位彩度差的罚分系数；目标偏色 6 时约 +5.4 ΔE */
+        const val NEUTRAL_PENALTY = 0.9f
     }
 
     fun indexOfCode(code: String): Int = colors.indexOfFirst { it.code == code }

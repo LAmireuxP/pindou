@@ -176,7 +176,7 @@ object ArtQuantizer {
                         val cb = palette.colors[idx].lab[2]
                         if (ca * ca + cb * cb < 25f) continue
                     }
-                    val d = Ciede2000.deltaE(cell, palette.colors[idx].lab)
+                    val d = palette.matchScore(cell, palette.colors[idx])
                     if (d < bestD) {
                         bestD = d
                         best = s
@@ -554,7 +554,7 @@ object ArtQuantizer {
                 val cb = e.lab[2]
                 if (ca * ca + cb * cb < 25f) continue // 彩度 < 5 的近白色不参选
             }
-            val d = Ciede2000.deltaE(floatArrayOf(l, a, b), e.lab)
+            val d = palette.matchScore(floatArrayOf(l, a, b), e)
             if (d < bestD) { bestD = d; best = i }
         }
         if (best >= 0) return best
