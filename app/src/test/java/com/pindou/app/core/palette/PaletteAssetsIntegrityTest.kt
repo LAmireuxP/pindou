@@ -38,4 +38,40 @@ class PaletteAssetsIntegrityTest {
         val onDisk = File("src/main/assets/palettes").list { _, name -> name.endsWith(".json") }!!.toSet()
         assertEquals(onDisk, PaletteAssets.FILES.toSet())
     }
+
+    /** 全色系套装：色数必须和套装规格严格相等，且同一套内色号 / hex 都不重复 */
+    @Test
+    fun `全色系套装色数与规格一致`() {
+        val expected = linkedMapOf(
+            "all_solid_24.json" to 24,
+            "all_solid_48.json" to 48,
+            "all_solid_72.json" to 72,
+            "all_solid_96.json" to 96,
+            "all_solid_120.json" to 120,
+            "all_solid_144.json" to 144,
+            "all_solid_216.json" to 216,
+            "all_solid_221.json" to 221,
+            "all_solid_272.json" to 272,
+        )
+        for ((file, count) in expected) {
+            val palette = PaletteJson.parse(File("src/main/assets/palettes/$file").readText())
+            assertEquals("$file 色数不符", count, palette.colors.size)
+            assertTrue("$file 品牌代号非 ALL 前缀", palette.brand.startsWith("ALL"))
+            assertTrue("$file 豆子规格应为 2.6mm", palette.beadSize == BeadSize.MM2_6)
+            assertEquals("$file 色号重复", count, palette.colors.map { it.code }.toSet().size)
+            assertEquals("$file hex 重复", count, palette.colors.map { it.argb }.toSet().size)
+        }
+    }
+
+    /** 套装是逐级扩色：每一套都必须是 272 色套装的真子集，换套装不会出现新色号 */
+    @Test
+    fun `全色系套装逐级包含`() {
+        val master = PaletteJson.parse(File("src/main/assets/palettes/all_solid_272.json").readText())
+        val masterCodes = master.colors.map { it.code }.toSet()
+        listOf(24, 48, 72, 96, 120, 144, 216, 221).forEach { n ->
+            val p = PaletteJson.parse(File("src/main/assets/palettes/all_solid_$n.json").readText())
+            val extra = p.colors.map { it.code }.filterNot { it in masterCodes }
+            assertTrue("all_solid_$n.json 含 272 色之外色号：$extra", extra.isEmpty())
+        }
+    }
 }

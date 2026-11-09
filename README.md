@@ -18,9 +18,9 @@
 
 不想算网格大小？点一下"自适应"，按照片比例自动设定；还能用倍数滑杆整体放大缩小，想要多大的图纸自己定。
 
-**9 套色卡 2000+ 色**
+**18 套色卡 2600+ 色**
 
-马牌、COCO、漫漫、盼盼、咪小窝、Perler、Hama、Artkal 大/小豆。选你手头有的牌子，照着图纸买豆就能拼。也可以限制最多用多少种颜色，控制成本。
+全色系 24/48/72/96/120/144/216/221/272 九档套装，加上马牌、COCO、漫漫、盼盼、咪小窝、Perler、Hama、Artkal 大/小豆。选你手头有的牌子或套装，照着图纸买豆就能拼。也可以限制最多用多少种颜色，控制成本。
 
 **手动精修**
 
@@ -85,6 +85,13 @@ keyPassword=你的密码
 
 - MARD/COCO/漫漫/盼盼/咪小窝 色值：[Zippland/perler-beads](https://github.com/Zippland/perler-beads)（AGPL-3.0）
 - Perler/Hama/Artkal 色值：[xuange6610/PindouAI](https://github.com/xuange6610/PindouAI)（Apache-2.0）
+- 全色系 24→272 套装：颂拼豆(iBeads) 7.19.36 的 flutter 资产 `bead.json` + `bead_package.json`
+
+全色系九档由 `tools/gen_all_solid_palettes.py` 生成，源数据存于 `tools/vendor/ibeads/`，改完重跑脚本即可复现：
+
+```
+python tools/gen_all_solid_palettes.py
+```
 
 色值为工程近似值，与实体豆可能存在色差，请以实物色卡为准。
 

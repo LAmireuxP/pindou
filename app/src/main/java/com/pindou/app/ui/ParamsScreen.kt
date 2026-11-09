@@ -1,6 +1,9 @@
 package com.pindou.app.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,8 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -36,9 +40,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import com.pindou.app.core.palette.BeadPalette
 import com.pindou.app.core.pattern.GenerationStage
 import com.pindou.app.ui.shadcn.Button
 import com.pindou.app.ui.shadcn.OutlinedButton
@@ -59,8 +66,17 @@ fun ParamsScreen(vm: AppViewModel) {
     var preset by remember { mutableStateOf(if (vm.gridW.toString() in GridPresets) vm.gridW.toString() else "自定义") }
     var paletteMenuOpen by remember { mutableStateOf(false) }
     var showTextEditor by remember { mutableStateOf(false) }
-    val beadSizeTag = palette?.beadSize?.name ?: "MM5"
-    val availablePalettes = vm.palettesFor(beadSizeTag)
+    // 色卡筛选：全部 / 全色系套装 / 5mm 品牌 / 2.6mm 品牌
+    var paletteFilter by remember { mutableStateOf("全部") }
+    val allPalettes = vm.palettes
+    val availablePalettes = remember(allPalettes, paletteFilter) {
+        when (paletteFilter) {
+            "全色系" -> allPalettes.filter { it.brand.startsWith("ALL") }
+            "5mm 普通豆" -> allPalettes.filter { it.beadSize.name == "MM5" }
+            "2.6mm 小豆" -> allPalettes.filter { it.beadSize.name == "MM2_6" && !it.brand.startsWith("ALL") }
+            else -> allPalettes
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -294,52 +310,97 @@ fun ParamsScreen(vm: AppViewModel) {
         // 豆子规格 + 色卡
         ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                Text("豆子与色卡", style = MaterialTheme.typography.titleLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    ShChip(
-                        text = "5mm 普通豆",
-                        selected = beadSizeTag == "MM5",
-                        onClick = {
-                            val five = vm.palettesFor("MM5")
-                            if (five.isNotEmpty() && palette?.beadSize?.name != "MM5") {
-                                vm.selectPalette(five.firstOrNull { it.brand == "MARD" } ?: five.first())
-                            }
-                        },
-                    )
-                    ShChip(
-                        text = "2.6mm 小豆",
-                        selected = beadSizeTag == "MM2_6",
-                        onClick = {
-                            val mini = vm.palettesFor("MM2_6")
-                            if (mini.isNotEmpty()) vm.selectPalette(mini.first())
-                        },
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("豆子与色卡", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "${allPalettes.size} 套",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    listOf("全部", "全色系", "5mm 普通豆", "2.6mm 小豆").forEach { f ->
+                        ShChip(text = f, selected = paletteFilter == f, onClick = { paletteFilter = f })
+                    }
+                }
                 if (palette != null) {
-                    ExposedDropdownMenuBox(
-                        expanded = paletteMenuOpen,
-                        onExpandedChange = { paletteMenuOpen = it },
-                    ) {
-                        OutlinedTextField(
-                            value = palette.brandLabel,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("色卡（${availablePalettes.size} 套可选）") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = paletteMenuOpen) },
-                            shape = RoundedCornerShape(8.dp),
+                    // 不用 ExposedDropdownMenuBox：它把点击交给 TextField 风格的锚点，
+                    // 自定义 Row 当锚点时点击会被吞掉，这里用普通 DropdownMenu 自己控开关。
+                    Box {
+                        // 触发器直接展示当前色卡的实际颜色，比一行纯文字更容易分辨
+                        Row(
                             modifier = Modifier
-                                .menuAnchor()
-                                .fillMaxWidth(),
-                        )
-                        ExposedDropdownMenu(expanded = paletteMenuOpen, onDismissRequest = { paletteMenuOpen = false }) {
-                            availablePalettes.forEach { p ->
-                                androidx.compose.material3.DropdownMenuItem(
-                                    text = { Text("${p.brandLabel}（${p.colors.size} 色）") },
-                                    onClick = {
-                                        vm.selectPalette(p)
-                                        paletteMenuOpen = false
-                                    },
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+                                .clickable { paletteMenuOpen = true }
+                                .padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(palette.brandLabel, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${palette.colors.size} 色 · ${if (palette.beadSize.name == "MM5") "5mm 普通豆" else "2.6mm 小豆"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                            }
+                            PaletteSwatches(palette)
+                            Text("▾", style = MaterialTheme.typography.titleMedium)
+                        }
+                        DropdownMenu(
+                            expanded = paletteMenuOpen,
+                            onDismissRequest = { paletteMenuOpen = false },
+                            modifier = Modifier.heightIn(max = 520.dp),
+                        ) {
+                            // 分组：全色系套装单独一段，其余按豆子规格分
+                            val groups = listOf(
+                                "全色系 · 2.6mm 融合豆" to availablePalettes.filter { it.brand.startsWith("ALL") },
+                                "5mm 普通豆品牌色卡" to availablePalettes.filter {
+                                    it.beadSize.name == "MM5" && !it.brand.startsWith("ALL")
+                                },
+                                "2.6mm 小豆品牌色卡" to availablePalettes.filter {
+                                    it.beadSize.name == "MM2_6" && !it.brand.startsWith("ALL")
+                                },
+                            ).filter { it.second.isNotEmpty() }
+                            groups.forEach { (title, list) ->
+                                Text(
+                                    title,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = Spacing.md, top = Spacing.sm, bottom = 2.dp),
+                                )
+                                list.forEach { p ->
+                                    androidx.compose.material3.DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                                            ) {
+                                                Text(
+                                                    // 全色系的品牌名里已经带「24 色」，再拼一次会变成「24 色（24 色）」
+                                                    if (p.brandLabel.contains("色")) p.brandLabel
+                                                    else "${p.brandLabel}（${p.colors.size} 色）",
+                                                    modifier = Modifier.weight(1f),
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                )
+                                                PaletteSwatches(p)
+                                            }
+                                        },
+                                        onClick = {
+                                            vm.selectPalette(p)
+                                            paletteMenuOpen = false
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -586,5 +647,27 @@ fun SwitchRow(
             }
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/** 色卡缩略色带：取前 [count] 个色号拼一条，用来快速区分名字相近的套装 */
+@Composable
+private fun PaletteSwatches(palette: BeadPalette, count: Int = 8) {
+    val shape = RoundedCornerShape(4.dp)
+    Row(
+        modifier = Modifier
+            .width((count * 6).dp)
+            .height(14.dp)
+            .clip(shape)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape),
+    ) {
+        palette.colors.take(count).forEach { c ->
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxSize()
+                    .background(Color(c.argb)),
+            )
+        }
     }
 }
