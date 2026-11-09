@@ -140,7 +140,8 @@ object PatternGenerator {
             onStage(GenerationStage.MAP, 1f)
         }
 
-        // ②b 背景移除（可选）：从四边洪水填充，与边缘连通的近似色清成空格
+        // ②b 背景移除（可选）：固定边界主色 + 主体剪影保护，只清主体外的背景，
+        //     主体内部的同色区域（猫脸白、花瓣间淡色）保留
         val cells: IntArray = if (options.removeBackground) {
             onStage(GenerationStage.BACKGROUND, 0f)
             val removed = BackgroundRemover.applyToCells(

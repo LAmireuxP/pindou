@@ -79,6 +79,21 @@ object ProbeFlow {
         vm.handleBack()
         sleep(900)
         shot("04_params_scores")
+
+        // 背景移除专项：同一张图、同一档参数，只打开开关
+        vm.removeBackground = true
+        vm.backgroundTolerance = 12f
+        vm.generate()
+        waitUntil(120_000) { vm.genState is GenState.Done }
+        sleep(1000)
+        (vm.genState as? GenState.Done)?.let { g ->
+            say("bg_on keep=${g.result.cells.count { it >= 0 }} grid=${g.result.width}x${g.result.height}")
+        }
+        shot("05_params_bg_on")
+        vm.openPreview()
+        waitUntil(5_000) { vm.screen == Screen.PREVIEW }
+        sleep(1200)
+        shot("06_preview_bg_on")
     }
 
     private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {

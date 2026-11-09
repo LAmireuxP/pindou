@@ -1,97 +1,295 @@
 package com.pindou.app.core.pattern
 
-import com.pindou.app.core.color.Ciede2000
-import com.pindou.app.core.color.ColorConversions
+import kotlin.math.abs
+import kotlin.math.cbrt
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.sqrt
 
 /**
- * 背景移除：从网格四边的格子做洪水填充，把与种子色 ΔE 在容差内的连通区域标记为空格（-1）。
+ * 背景移除：只删「图像主体之外」的背景，主体内部同色区域不动。
  *
- * 与"抠图"不同，这里只移除**从边缘连通**的区域，图案内部的同色块会被保留
- * （例如主体里的大面积白色不会被误删）。
+ * 旧实现是"从四边 BFS，每步拿当前格颜色当参考"，等于允许颜色逐格漂移：
+ * 白 → 淡粉 → 花瓣，一圈圈腐蚀进画面，一张 5382 格的花环猫只剩 1136 格。
+ *
+ * 现在的判定分三层：
+ *  1) 背景色模型固定：取四边窄带（band）的主色簇心，整张图都拿它做参考，
+ *     不允许逐格改参考色，颜色漂移链直接断掉；
+ *  2) 主体剪影保护：与背景色差远大于容差的格子算"确定主体"，
+ *     先膨胀 2 格再补洞，得到主体剪影。落在剪影里的格子一律不删——
+ *     猫脸内部的白、花瓣之间的淡色、细描边都靠这一层保住；
+ *  3) 去掉之后前景不足全图 3% 时视为误判（纯色图/背景图），整体放弃移除。
+ *
+ * 复杂度：O(n) 两遍泛洪 + O(band·k) 边界聚类，78×69 网格 1ms 量级。
  */
 object BackgroundRemover {
 
-    private const val BACKGROUND = -1
+    /** 边界取样带宽上限（格）；过宽会把贴着边缘的主体色算成背景 */
+    private const val MAX_BAND = 4
+
+    /** 主体剪影膨胀半径（格）：盖住花瓣的淡色描边和抗锯齿过渡 */
+    private const val SILHOUETTE_GROW = 2
+
+    /** 前景低于全图该比例 → 判定为误删，放弃移除 */
+    private const val MIN_FOREGROUND_SHARE = 0.03
 
     /**
-     * @param grid 降采样后的 ARGB 网格
-     * @param tolerance CIEDE2000 容差（建议 8~20；越大删得越多）
-     * @return 与 grid 同尺寸的标记结果：true 表示该格判为背景
+     * 计算背景掩码（true = 该格是背景，应清空）。
+     *
+     * @param grid 网格采样色（ARGB），长度 ≥ w*h
+     * @param tolerance 与背景主色的 Lab ΔE 容差（UI 滑杆 4~30）
      */
-    fun detect(
-        grid: IntArray,
-        width: Int,
-        height: Int,
-        tolerance: Double = 12.0,
-    ): BooleanArray {
-        val isBg = BooleanArray(grid.size)
-        if (width < 3 || height < 3) return isBg
+    fun detect(grid: IntArray, w: Int, h: Int, tolerance: Double = 12.0): BooleanArray {
+        val n = w * h
+        val empty = BooleanArray(n.coerceAtLeast(0))
+        if (n <= 0 || w < 5 || h < 5 || grid.size < n) return empty
 
-        // 种子：四条边上的所有格子
-        val queue = ArrayDeque<Int>()
-        val visited = BooleanArray(grid.size)
+        val lab = FloatArray(n * 3)
+        for (i in 0 until n) {
+            val c = grid[i]
+            val r = ((c shr 16) and 0xFF) / 255f
+            val g = ((c shr 8) and 0xFF) / 255f
+            val b = (c and 0xFF) / 255f
+            toLab(r, g, b, lab, i * 3)
+        }
 
-        fun seed(index: Int) {
-            if (!visited[index]) {
-                visited[index] = true
-                queue.addLast(index)
+        // ① 边界窄带主色：取中位色 + 邻域簇，避免把一条边上的主体当成背景
+        val band = (min(w, h) / 16).coerceIn(1, MAX_BAND)
+        val border = ArrayList<Int>(n / 2)
+        for (y in 0 until h) for (x in 0 until w) {
+            if (x < band || y < band || x >= w - band || y >= h - band) border.add(y * w + x)
+        }
+        if (border.size < 8) return empty
+        val bgLab = dominantBorderColor(lab, border)
+
+        // ② 背景相似 + 确定主体（ΔE 超过 2 倍容差）
+        val bgLike = BooleanArray(n)
+        val confident = BooleanArray(n)
+        val confidentCut = tolerance * 2.0
+        for (i in 0 until n) {
+            val d = deltaE76(lab, i * 3, bgLab, 0)
+            bgLike[i] = d <= tolerance
+            confident[i] = d > confidentCut
+        }
+
+        // ③ 主体剪影：膨胀 confident + 补洞（洞 = 剪影内部，不外泄到画面边缘）
+        val grown = dilate(confident, w, h, SILHOUETTE_GROW)
+        val silhouette = fillHoles(grown, w, h)
+
+        // ④ 只从边界泛洪，且只走 bgLike、不进剪影
+        val mask = BooleanArray(n)
+        val queue = IntArray(n)
+        var head = 0
+        var tail = 0
+        fun push(i: Int) {
+            if (!mask[i] && bgLike[i] && !silhouette[i]) {
+                mask[i] = true
+                queue[tail++] = i
             }
         }
-        for (x in 0 until width) {
-            seed(x)                       // 上边
-            seed((height - 1) * width + x) // 下边
+        for (x in 0 until w) {
+            push(x)
+            push((h - 1) * w + x)
         }
-        for (y in 0 until height) {
-            seed(y * width)               // 左边
-            seed(y * width + width - 1)   // 右边
+        for (y in 0 until h) {
+            push(y * w)
+            push(y * w + w - 1)
+        }
+        while (head < tail) {
+            val i = queue[head++]
+            val x = i % w
+            val y = i / w
+            // 8 邻域：像素画的斜向背景连通必须算通，否则会留一圈白边
+            for (dy in -1..1) for (dx in -1..1) {
+                if (dx == 0 && dy == 0) continue
+                val nx = x + dx
+                val ny = y + dy
+                if (nx in 0 until w && ny in 0 until h) push(ny * w + nx)
+            }
         }
 
-        // 每个种子用"自身颜色"作为连通判据：BFS 扩散时只吞掉与**出发种子**接近的格子
-        // 简化实现：以队列中当前格的颜色为参考（局部相邻扩散），可有效贴合渐变背景
-        val labCache = arrayOfNulls<FloatArray>(grid.size)
-        fun labOf(i: Int): FloatArray = labCache[i] ?: ColorConversions.argbToLab(grid[i]).also { labCache[i] = it }
-
-        while (queue.isNotEmpty()) {
-            val cur = queue.removeFirst()
-            isBg[cur] = true
-            val curLab = labOf(cur)
-            val x = cur % width
-            val y = cur / width
-
-            fun tryNeighbor(nx: Int, ny: Int) {
-                if (nx < 0 || ny < 0 || nx >= width || ny >= height) return
-                val ni = ny * width + nx
-                if (visited[ni]) return
-                val d = Ciede2000.deltaE(curLab, labOf(ni))
-                if (d <= tolerance) {
-                    visited[ni] = true
-                    queue.addLast(ni)
+        // ⑤ 剪影外圈「纯背景色」清理：膨胀保护带会留下 1~2 格白晕，
+        //    只吃与背景几乎同色（ΔE ≤ 容差×0.35）且与已移除区相连的格子，
+        //    淡粉花瓣（ΔE 通常 6~12）不会被这一步吃掉。
+        val strictCut = max(2.0, tolerance * 0.35)
+        val queue2 = IntArray(n)
+        var h2 = 0
+        var t2 = 0
+        fun pushHalo(i: Int) {
+            if (mask[i] || !grown[i] || confident[i]) return
+            if (deltaE76(lab, i * 3, bgLab, 0) > strictCut) return
+            mask[i] = true
+            queue2[t2++] = i
+        }
+        for (i in 0 until n) {
+            if (mask[i] || !grown[i] || confident[i]) continue
+            val x = i % w
+            val y = i / w
+            for (dy in -1..1) for (dx in -1..1) {
+                val nx = x + dx
+                val ny = y + dy
+                if (nx in 0 until w && ny in 0 until h && mask[ny * w + nx]) {
+                    pushHalo(i)
+                    break
                 }
             }
-            tryNeighbor(x + 1, y)
-            tryNeighbor(x - 1, y)
-            tryNeighbor(x, y + 1)
-            tryNeighbor(x, y - 1)
         }
-        return isBg
+        while (h2 < t2) {
+            val i = queue2[h2++]
+            val x = i % w
+            val y = i / w
+            for (dy in -1..1) for (dx in -1..1) {
+                if (dx == 0 && dy == 0) continue
+                val nx = x + dx
+                val ny = y + dy
+                if (nx in 0 until w && ny in 0 until h) pushHalo(ny * w + nx)
+            }
+        }
+
+        val removed = mask.count { it }
+        if (removed == 0) return empty
+        val foreground = n - removed
+        // 前景太小 = 背景模型吃掉了整张图（纯色底、无主体），宁可不动
+        if (foreground < max(4, (n * MIN_FOREGROUND_SHARE).toInt())) return empty
+        return mask
     }
 
-    /**
-     * 执行背景移除：返回新网格，背景格被置为 [BACKGROUND]（-1 色卡索引不会被使用，
-     * 调用方在映射后需要把对应位置也置 -1）。
-     */
+    /** 把背景格对应的色卡索引置 -1，返回新数组（不改入参） */
     fun applyToCells(
         cells: IntArray,
         grid: IntArray,
-        width: Int,
-        height: Int,
+        w: Int,
+        h: Int,
         tolerance: Double = 12.0,
     ): IntArray {
-        val isBg = detect(grid, width, height, tolerance)
+        val mask = detect(grid, w, h, tolerance)
+        if (mask.none { it }) return cells.copyOf()
         val out = cells.copyOf()
-        for (i in isBg.indices) {
-            if (isBg[i]) out[i] = BACKGROUND
-        }
+        for (i in 0 until min(out.size, mask.size)) if (mask[i]) out[i] = -1
         return out
+    }
+
+    /**
+     * 边界主色：把边界带按 Lab 亮度分成 3 段取中位样本，
+     * 再选覆盖格数最多的一段作背景参考。只保留一个参考色是刻意的——
+     * 多个参考色会把贴着边缘的淡色花瓣也算成背景。
+     */
+    private fun dominantBorderColor(lab: FloatArray, border: List<Int>): FloatArray {
+        val lum = border.map { lab[it * 3] }.sorted()
+        val cuts = floatArrayOf(
+            lum[lum.size / 8], lum[lum.size / 2], lum[lum.size * 7 / 8],
+        )
+        val buckets = Array(3) { ArrayList<Int>() }
+        for (i in border) {
+            val l = lab[i * 3]
+            val b = when {
+                abs(l - cuts[0]) <= abs(l - cuts[1]) && abs(l - cuts[0]) <= abs(l - cuts[2]) -> 0
+                abs(l - cuts[1]) <= abs(l - cuts[2]) -> 1
+                else -> 2
+            }
+            buckets[b].add(i)
+        }
+        val main = buckets.maxByOrNull { it.size } ?: return floatArrayOf(100f, 0f, 0f)
+        val out = FloatArray(3)
+        for (i in main) {
+            out[0] += lab[i * 3]
+            out[1] += lab[i * 3 + 1]
+            out[2] += lab[i * 3 + 2]
+        }
+        val inv = 1f / main.size
+        out[0] *= inv
+        out[1] *= inv
+        out[2] *= inv
+        return out
+    }
+
+    /** 方形核膨胀（可分离两遍，避免 (2r+1)^2 扫描） */
+    private fun dilate(src: BooleanArray, w: Int, h: Int, r: Int): BooleanArray {
+        val n = w * h
+        val dilated = BooleanArray(n)
+        if (r <= 0) {
+            src.copyInto(dilated)
+        } else {
+            val tmp = BooleanArray(n)
+            for (y in 0 until h) for (x in 0 until w) {
+                if (!src[y * w + x]) continue
+                val x0 = max(0, x - r)
+                val x1 = min(w - 1, x + r)
+                for (xx in x0..x1) tmp[y * w + xx] = true
+            }
+            for (y in 0 until h) for (x in 0 until w) {
+                if (!tmp[y * w + x]) continue
+                val y0 = max(0, y - r)
+                val y1 = min(h - 1, y + r)
+                for (yy in y0..y1) dilated[yy * w + x] = true
+            }
+        }
+        return dilated
+    }
+
+    /**
+     * 补洞：从四边对 !mask 泛洪，没被泛到的非掩码格就是被包住的内部。
+     * 猫脸白、花瓣之间的淡色都靠这一步保住。
+     */
+    private fun fillHoles(maskIn: BooleanArray, w: Int, h: Int): BooleanArray {
+        val n = w * h
+        val dilated = maskIn.copyOf()
+        // 从边界泛洪所有非剪影格，剩下的空洞并进剪影
+        val reach = BooleanArray(n)
+        val queue = IntArray(n)
+        var head = 0
+        var tail = 0
+        fun push(i: Int) {
+            if (!reach[i] && !dilated[i]) {
+                reach[i] = true
+                queue[tail++] = i
+            }
+        }
+        for (x in 0 until w) {
+            push(x)
+            push((h - 1) * w + x)
+        }
+        for (y in 0 until h) {
+            push(y * w)
+            push(y * w + w - 1)
+        }
+        while (head < tail) {
+            val i = queue[head++]
+            val x = i % w
+            val y = i / w
+            if (x > 0) push(i - 1)
+            if (x < w - 1) push(i + 1)
+            if (y > 0) push(i - w)
+            if (y < h - 1) push(i + w)
+        }
+        for (i in 0 until n) if (!dilated[i] && !reach[i]) dilated[i] = true
+        return dilated
+    }
+
+    private fun toLab(r: Float, g: Float, b: Float, out: FloatArray, o: Int) {
+        fun lin(c: Float): Float =
+            if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f)
+        val lr = lin(r)
+        val lg = lin(g)
+        val lb = lin(b)
+        var x = (0.4124f * lr + 0.3576f * lg + 0.1805f * lb) / 0.95047f
+        var y = (0.2126f * lr + 0.7152f * lg + 0.0722f * lb) / 1.00000f
+        var z = (0.0193f * lr + 0.1192f * lg + 0.9505f * lb) / 1.08883f
+        x = f(x)
+        y = f(y)
+        z = f(z)
+        out[o] = 116f * y - 16f
+        out[o + 1] = 500f * (x - y)
+        out[o + 2] = 200f * (y - z)
+    }
+
+    private fun f(t: Float): Float = if (t > 0.008856f) cbrt(t) else 7.787f * t + 16f / 116f
+
+    private fun deltaE76(a: FloatArray, ao: Int, b: FloatArray, bo: Int): Double {
+        val dl = (a[ao] - b[bo]).toDouble()
+        val da = (a[ao + 1] - b[bo + 1]).toDouble()
+        val db = (a[ao + 2] - b[bo + 2]).toDouble()
+        return sqrt(dl * dl + da * da + db * db)
     }
 }

@@ -92,6 +92,27 @@ class ConversionEvalHarness {
 
             // 自动优选：候选排序 + 每个候选单图（仅 user_test，便于肉眼比对）
             val base = GeneratorOptions(gridW = gridW, gridH = gridH, filterLevel = FilterLevel.MEDIUM)
+
+            // 背景移除专项：同一组参数，开关各出一张，直接看内部白有没有被误删
+            if (name == "user_cat") {
+                val off = PatternGenerator.generate(
+                    pixels, w, h,
+                    GeneratorOptions(gridW = gridW, gridH = gridH, filterLevel = FilterLevel.NONE,
+                        autoExposure = true, removeBackground = false),
+                    palette,
+                )
+                val on = PatternGenerator.generate(
+                    pixels, w, h,
+                    GeneratorOptions(gridW = gridW, gridH = gridH, filterLevel = FilterLevel.NONE,
+                        autoExposure = true, removeBackground = true, backgroundTolerance = 12.0),
+                    palette,
+                )
+                writePattern(File(outDir, "user_cat_bg_off.png"), off, palette)
+                writePattern(File(outDir, "user_cat_bg_on.png"), on, palette)
+                stats.appendLine("user_cat 背景移除 关了保留 ${off.cells.count { it >= 0 }} 格 / " +
+                    "开了保留 ${on.cells.count { it >= 0 }} 格")
+            }
+
             val outcome = AutoTuner.sweep(
                 pixels, w, h, base, palette,
                 maxColorsOptions = AutoTuner.defaultColorOptions(base),

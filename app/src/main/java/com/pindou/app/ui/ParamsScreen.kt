@@ -340,7 +340,7 @@ fun ParamsScreen(vm: AppViewModel) {
                 }
                 SwitchRow(
                     title = "移除背景",
-                    subtitle = "自动去掉照片边缘的纯色背景（适合白底商品图/证件照）",
+                    subtitle = "只去掉主体外的背景，主体内的同色区域保留（白底手绘图优先）",
                     checked = vm.removeBackground,
                     onCheckedChange = { vm.removeBackground = it },
                 )
@@ -463,14 +463,14 @@ fun ParamsScreen(vm: AppViewModel) {
         ) {
             // 自动优选只对图片有意义（文字模式的栅格化参数不同），文字模式隐藏
             if (!isTextMode) {
-                OutlinedButton(
+                Button(
                     onClick = { vm.autoTune() },
                     enabled = ready && idle && !vm.autoTuneRunning,
                     modifier = Modifier
-                        .weight(1f)
+                        .weight(1.2f)
                         .height(48.dp),
                 ) {
-                    Text("✦ 自动优选")
+                    Text("✦ 智能优选")
                 }
             }
             Button(
@@ -486,7 +486,7 @@ fun ParamsScreen(vm: AppViewModel) {
                 },
                 enabled = ready && idle,
                 modifier = Modifier
-                    .weight(if (isTextMode) 1f else 1.25f)
+                    .weight(if (isTextMode) 1f else 1.2f)
                     .height(48.dp),
             ) {
                 if (vm.genState is GenState.Running) {
