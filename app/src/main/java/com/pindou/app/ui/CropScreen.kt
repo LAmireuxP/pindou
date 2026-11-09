@@ -696,29 +696,40 @@ private fun edgeResize(
 
 private fun DrawScope.drawGuides(guides: CropGuides, cl: Float, ct: Float, w: Float, h: Float) {
     if (guides == CropGuides.NONE) return
-    val line = Color.White.copy(alpha = 0.35f)
-    val lw = 1.dp.toPx()
+    // 构图辅助线与网格线是两套语义：辅助线是"看构图的主线"，压黑加粗；
+    // 网格线是"数量刻度"，留白细线。都画白线时两者在彩色色块上糊成一片，
+    // 分不清哪条是三分线、哪条是格子边。
+    val line = Color.Black.copy(alpha = 0.62f)
+    // 深色底图上纯黑会隐身：垫一层极淡白边只做轮廓，主色仍是黑
+    val halo = Color.White.copy(alpha = 0.30f)
+    val lw = 1.8.dp.toPx()
+    val haloW = lw + 1.4.dp.toPx()
+    fun seg(a: Offset, b: Offset) {
+        drawLine(halo, a, b, haloW, cap = StrokeCap.Round)
+        drawLine(line, a, b, lw, cap = StrokeCap.Round)
+    }
     when (guides) {
         CropGuides.THIRDS -> {
             for (i in 1..2) {
-                drawLine(line, Offset(cl + w * i / 3f, ct), Offset(cl + w * i / 3f, ct + h), lw)
-                drawLine(line, Offset(cl, ct + h * i / 3f), Offset(cl + w, ct + h * i / 3f), lw)
+                seg(Offset(cl + w * i / 3f, ct), Offset(cl + w * i / 3f, ct + h))
+                seg(Offset(cl, ct + h * i / 3f), Offset(cl + w, ct + h * i / 3f))
             }
         }
         CropGuides.GOLDEN -> {
             for (t in floatArrayOf(0.382f, 0.618f)) {
-                drawLine(line, Offset(cl + w * t, ct), Offset(cl + w * t, ct + h), lw)
-                drawLine(line, Offset(cl, ct + h * t), Offset(cl + w, ct + h * t), lw)
+                seg(Offset(cl + w * t, ct), Offset(cl + w * t, ct + h))
+                seg(Offset(cl, ct + h * t), Offset(cl + w, ct + h * t))
             }
         }
         CropGuides.CENTER -> {
-            drawLine(line, Offset(cl + w / 2f, ct), Offset(cl + w / 2f, ct + h), lw)
-            drawLine(line, Offset(cl, ct + h / 2f), Offset(cl + w, ct + h / 2f), lw)
+            seg(Offset(cl + w / 2f, ct), Offset(cl + w / 2f, ct + h))
+            seg(Offset(cl, ct + h / 2f), Offset(cl + w, ct + h / 2f))
+            drawCircle(halo, 4.dp.toPx(), Offset(cl + w / 2f, ct + h / 2f))
             drawCircle(line, 3.dp.toPx(), Offset(cl + w / 2f, ct + h / 2f))
         }
         CropGuides.DIAGONAL -> {
-            drawLine(line, Offset(cl, ct), Offset(cl + w, ct + h), lw)
-            drawLine(line, Offset(cl + w, ct), Offset(cl, ct + h), lw)
+            seg(Offset(cl, ct), Offset(cl + w, ct + h))
+            seg(Offset(cl + w, ct), Offset(cl, ct + h))
         }
         CropGuides.NONE -> {}
     }
