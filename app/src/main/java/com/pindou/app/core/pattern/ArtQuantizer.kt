@@ -4,8 +4,12 @@ import com.pindou.app.core.color.Ciede2000
 import com.pindou.app.core.color.ColorConversions
 import com.pindou.app.core.palette.BeadPalette
 import java.util.Random
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * 像素画支路的量化器（与照片支路完全分开）。
@@ -205,23 +209,30 @@ object ArtQuantizer {
         //    的源色和周围差几十，不会被吃掉。
         val despeckled = despeckle(artCode, gLab, gOfPixel, art.w, art.h)
 
-        // ⑤ 背景光晕归一：像素画的背景常带一层极淡的粉色渐变（#F8E7EF 这类），
-        //    它会被映射成好几个浅灰粉，落到格子上就是四角和底部两条脏带。
+        // ⑤ 背景光晕归一：只收拾"真正中性"的四边浅色（彩度 ≤ 3）。
         //
-        //    只从四边向内做"浅色 + 局部连续"的洪水：渐变本身是连续的，能一路
-        //    灌到花环外沿；花环的花瓣和光晕之间有色差跳变，洪水在这里停住。
-        //    不用"离主体距离"判据——花环缝隙里的浅色花瓣离饱和色也远，会被
-        //    一起吸白，整圈花瓣立刻塌成白色空洞。
+        //    实测这张图的背景渐变是 #F6EAEE / #F5E9ED 这一族淡粉，彩度 3~6。
+        //    旧阈值放到 10 会把它整片判成光晕铲成 T01 白豆，右下角那圈粉色
+        //    就整块消失——用户看到的"粉色变成背景白"。收到 3 之后，淡粉
+        //    留在图上交给 ⑥ 的色相保留重映射，只有纯白/近白（彩度 < 3）
+        //    会被归一，四角脏带依旧清得掉。
         //
-        //    阈值取"彩度 ≤ 10、L ≥ 88"：实测这张图的背景渐变彩度 4~7.3，
-        //    而最浅的花瓣彩度 33，中间有 4 倍余量，不会误吞花瓣。旧的 ≤ 3
-        //    把 #F8E8ED 全部漏掉，正是四角灰粉块一直清不掉的直接原因。
+        //    从四边向内做"浅色 + 局部连续"的洪水：渐变本身连续，能灌到花环
+        //    外沿；花环花瓣和光晕之间有色差跳变，洪水在这里停住。
         val whiteIdx = purestWhite(palette, excludedCodes)
+        var out = despeckled
         if (whiteIdx >= 0) {
             val glow = borderGlow(gLab, gOfPixel, art.w, art.h, groupCount)
-            for (i in 0 until n) if (glow[i]) despeckled[i] = whiteIdx
+            for (i in 0 until n) if (glow[i]) out[i] = whiteIdx
         }
-        return assemble(despeckled, art, gridW, gridH)
+
+        // ⑥ 淡色保留：源图里"很浅但色相明确"的像素（右下角淡粉光晕、浅黄
+        //    花瓣底层）按最近色会落到 T01/H10 这类近中性豆上——H10 是暖灰，
+        //    铺出来是一片脏灰，看着就和背景白没区别。
+        //    这里对彩度 2~14、L ≥ 86 的组做一次色相约束重映射：候选豆必须
+        //    与源色同色相（±35°）且彩度不低于源色的一半。
+        out = rescuePaleTint(out, gLab, gOfPixel, groupCount, gW, palette, excludedCodes)
+        return assemble(out, art, gridW, gridH)
     }
 
     /**
@@ -234,15 +245,41 @@ object ArtQuantizer {
      */
     private const val NOISE_MERGE_DELTA = 4.5
 
-    /** 光晕判据：够亮、够中性 */
+    /** 光晕判据：够亮、够中性（彩度 ≤ 3，淡粉不算光晕） */
     private const val GLOW_MIN_L = 88f
-    private const val GLOW_MAX_CHROMA2 = 100f // 彩度 ≤ 10
+    private const val GLOW_MAX_CHROMA2 = 9f // 彩度 ≤ 3
 
     /** 相邻画像素算"同一片渐变"的 Lab 距离上限 */
     private const val GLOW_STEP = 9.0
 
     /** 去孤点时，本像素与邻域均值色差超过该值即视为真实细节，不替换 */
     private const val DESPECKLE_GUARD = 8.0
+
+    /**
+     * 淡色保留的参数。
+     *
+     * 下限 2.0：低于 2 的彩度在 JPEG 里就是白底噪声，不能碰；
+     * 上限 14：再高就是正常彩色，本来就能映射对。
+     */
+    private const val PALE_MIN_L = 86f
+    private const val PALE_MIN_CHROMA = 2.0f
+    private const val PALE_MAX_CHROMA = 14.0f
+    private const val PALE_HUE_TOL_DEG = 35.0
+
+    /**
+     * 候选豆不许比源色暗超过这个值。
+     *
+     * 色卡里最接近淡粉 #F6EAEE 的其实是 H08 #E7D6DB（ΔE 4.65），但它比源色
+     * 暗 6.6 个 L——一整片背景铺上去就是一块灰扑扑的雾。浅色背景宁可选亮
+     * 一点的同色相豆（Q04 #FFEBFA，ΔE 5.61），亮度对上了才像"光晕"。
+     */
+    private const val PALE_MAX_DARKEN = 3.5f
+
+    /** 重映射允许的最大色差：超过说明色卡里没有同色相的浅色豆，保持原样 */
+    private const val PALE_MAX_DELTA_E = 12.0
+
+    /** 组内像素数下限：低于此值多半是抗锯齿噪点，不参与重映射 */
+    private const val PALE_MIN_WEIGHT = 2.0
 
     /**
      * 单轮 3×3 去孤点。
@@ -372,6 +409,81 @@ object ArtQuantizer {
         val da = (lab[u * 3 + 1] - lab[v * 3 + 1]).toDouble()
         val db = (lab[u * 3 + 2] - lab[v * 3 + 2]).toDouble()
         return kotlin.math.sqrt(dl * dl + da * da + db * db)
+    }
+
+    /**
+     * 淡色保留重映射。
+     *
+     * 解决的问题：#F6EAEE 这种淡粉彩度只有 3.6，CIEDE2000 下离 H10 #EEE9EA
+     * （暖灰，彩度 1.5）只有 3.1，离真正的浅粉豆 E17 #FFE2EA 有 6.5。最近色
+     * 必然选灰——整片粉色背景于是变成一片灰白，用户看到的就是"粉色被当成
+     * 背景白"。
+     *
+     * 判据（三条同时满足才换）：
+     *  1) 源色 L ≥ 86、彩度 2~14 —— 只处理"很浅但有颜色"的部分；
+     *  2) 候选豆色相与源色相差 ≤ 35°、彩度 ≥ 源色 × 0.5 —— 换上去必须
+     *     保住这个颜色，不能换成米黄或灰；
+     *  3) 与源色 CIEDE2000 ≤ 12 —— 色卡里没有合适的浅粉就保持原样，
+     *     不会硬凑一个突兀的粉色。
+     *
+     * 复杂度：O(组数 × 色卡数)，组数 ≤ 200、色卡 291，一次几毫秒。
+     */
+    private fun rescuePaleTint(
+        codes: IntArray,
+        lab: FloatArray,
+        groupOfPixel: IntArray,
+        groupCount: Int,
+        weights: DoubleArray,
+        palette: BeadPalette,
+        excludedCodes: Set<String>,
+    ): IntArray {
+        val repl = IntArray(groupCount) { -1 }
+        for (g in 0 until groupCount) {
+            if (weights[g] < PALE_MIN_WEIGHT) continue
+            val l = lab[g * 3]
+            if (l < PALE_MIN_L) continue
+            val a = lab[g * 3 + 1]
+            val b = lab[g * 3 + 2]
+            val chroma = sqrt(a * a + b * b)
+            if (chroma < PALE_MIN_CHROMA || chroma > PALE_MAX_CHROMA) continue
+            val src = floatArrayOf(l, a, b)
+            val srcHue = atan2(b, a) * 180.0 / PI
+            var best = -1
+            var bestD = Double.MAX_VALUE
+            for (i in palette.colors.indices) {
+                val e = palette.colors[i]
+                if (e.code in excludedCodes) continue
+                val ca = e.lab[1]
+                val cb = e.lab[2]
+                if (sqrt(ca * ca + cb * cb) < chroma * 0.5) continue
+                if (e.lab[0] < l - PALE_MAX_DARKEN) continue
+                val beadHue = atan2(cb, ca) * 180.0 / PI
+                if (abs(hueDelta(srcHue, beadHue)) > PALE_HUE_TOL_DEG) continue
+                val d = Ciede2000.deltaE(src, e.lab)
+                if (d < bestD) {
+                    bestD = d
+                    best = i
+                }
+            }
+            if (best >= 0 && bestD <= PALE_MAX_DELTA_E) repl[g] = best
+        }
+        val out = codes.copyOf()
+        for (i in out.indices) {
+            val g = groupOfPixel[i]
+            if (g in 0 until groupCount) {
+                val c = repl[g]
+                if (c >= 0) out[i] = c
+            }
+        }
+        return out
+    }
+
+    /** 两个色相角（度）之间的最短夹角，0..180 */
+    private fun hueDelta(a: Double, b: Double): Double {
+        var d = a - b
+        while (d > 180.0) d -= 360.0
+        while (d < -180.0) d += 360.0
+        return d
     }
 
     /** 色卡里最纯的白（L 最高、彩度最低）；没有则 -1 */

@@ -35,6 +35,17 @@ object BackgroundRemover {
     private const val MIN_FOREGROUND_SHARE = 0.03
 
     /**
+     * 允许比背景"更彩"多少（Lab 彩度差）。
+     *
+     * 白底 + 一层淡粉光晕的图（#F6EAEE，彩度 3.6）和白底只差 ΔE 6，单看
+     * 色差会被整片判成背景铲掉——用户说的"右下角粉色变成背景白"就是这条。
+     * 加上这条之后：格子必须和背景一样"没颜色"才可能被删。淡粉比白底彩
+     * 2.5 以上就被当成前景保留，真有彩色背景（蓝底、粉底）时背景本身彩度
+     * 高，容差跟着背景走，照样删得掉。
+     */
+    private const val BG_CHROMA_SLACK = 2.5
+
+    /**
      * 计算背景掩码（true = 该格是背景，应清空）。
      *
      * @param grid 网格采样色（ARGB），长度 ≥ w*h
@@ -62,6 +73,8 @@ object BackgroundRemover {
         }
         if (border.size < 8) return empty
         val bgLab = dominantBorderColor(lab, border)
+        val bgChroma = sqrt(bgLab[1] * bgLab[1] + bgLab[2] * bgLab[2])
+        val chromaCut = bgChroma + BG_CHROMA_SLACK
 
         // ② 背景相似 + 确定主体（ΔE 超过 2 倍容差）
         val bgLike = BooleanArray(n)
@@ -69,7 +82,10 @@ object BackgroundRemover {
         val confidentCut = tolerance * 2.0
         for (i in 0 until n) {
             val d = deltaE76(lab, i * 3, bgLab, 0)
-            bgLike[i] = d <= tolerance
+            val a = lab[i * 3 + 1]
+            val b = lab[i * 3 + 2]
+            val chroma = sqrt(a * a + b * b)
+            bgLike[i] = d <= tolerance && chroma <= chromaCut
             confident[i] = d > confidentCut
         }
 
