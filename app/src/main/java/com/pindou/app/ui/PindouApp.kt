@@ -75,12 +75,21 @@ fun PindouApp(vm: AppViewModel) {
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(vm::importBpat) }
 
+    // 色号图（现成图纸）走同一套 SAF 选择器，回调进校准页
+    val chartPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(vm::onChartPicked) }
+
     fun pickImage() {
         imagePicker.launch(arrayOf("image/*"))
     }
 
     fun pickBpat() {
         bpatPicker.launch(arrayOf("*/*"))
+    }
+
+    fun pickChart() {
+        chartPicker.launch(arrayOf("image/*"))
     }
 
     BackHandler(enabled = vm.screen != Screen.HOME) {
@@ -130,22 +139,35 @@ fun PindouApp(vm: AppViewModel) {
     ) { innerPadding ->
         Box(Modifier.padding(innerPadding)) {
             when (vm.screen) {
-                Screen.HOME -> HomeScreen(vm, selectedTab, onPickImage = ::pickImage, onPickBpat = ::pickBpat)
+                Screen.HOME -> HomeScreen(
+                    vm,
+                    selectedTab,
+                    onPickImage = ::pickImage,
+                    onPickBpat = ::pickBpat,
+                    onPickChart = ::pickChart,
+                )
                 Screen.CROP -> CropScreen(vm)
                 Screen.PARAMS -> ParamsScreen(vm)
                 Screen.PREVIEW -> PreviewScreen(vm)
                 Screen.EDITOR -> com.pindou.app.ui.editor.EditorScreen(vm)
                 Screen.CONSTRUCTION -> com.pindou.app.ui.build.ConstructionScreen(vm)
+                Screen.CHART_CALIBRATE -> ChartCalibrateScreen(vm)
             }
         }
     }
 }
 
 @Composable
-private fun HomeScreen(vm: AppViewModel, selectedTab: Int, onPickImage: () -> Unit, onPickBpat: () -> Unit) {
+private fun HomeScreen(
+    vm: AppViewModel,
+    selectedTab: Int,
+    onPickImage: () -> Unit,
+    onPickBpat: () -> Unit,
+    onPickChart: () -> Unit,
+) {
     when (selectedTab) {
         0 -> ProjectLibraryTab(vm, onPickImage, onPickBpat)
-        1 -> ParamsScreen(vm)
+        1 -> CreateScreen(vm, onPickPhoto = onPickImage, onPickChart = onPickChart)
         else -> SettingsScreen(vm)
     }
 }

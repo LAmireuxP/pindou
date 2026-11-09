@@ -24,6 +24,7 @@ import com.pindou.app.core.editor.ColorReplaceOps
 import com.pindou.app.core.editor.PaletteOps
 import com.pindou.app.core.image.CropRect
 import com.pindou.app.core.image.ImageTransforms
+import com.pindou.app.core.chart.ChartRecognizer
 import com.pindou.app.core.pattern.GenerationStage
 import com.pindou.app.core.pattern.BpatCodec
 import com.pindou.app.core.pattern.GeneratorOptions
@@ -46,7 +47,7 @@ import java.io.File
 import java.io.FileOutputStream
 
 /** 页面导航（线性流程，M5 引入项目库后再考虑导航库） */
-enum class Screen { HOME, CROP, PARAMS, PREVIEW, EDITOR, CONSTRUCTION }
+enum class Screen { HOME, CROP, PARAMS, PREVIEW, EDITOR, CONSTRUCTION, CHART_CALIBRATE }
 
 /** 编辑工具 */
 enum class EditorTool { PAINT, ERASE, PICKER, FILL, PAN }
@@ -101,6 +102,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var originalH: Int = 0
         private set
+
+    // ---------- 色号图识别（导入别人做好的网格图纸） ----------
+
+    /** 原图（校准页画布 + 网格线叠加用） */
+    var chartBitmap by mutableStateOf<Bitmap?>(null)
+        private set
+    var chartPixels: IntArray? = null
+        private set
+    var chartW: Int = 0
+        private set
+    var chartH: Int = 0
+        private set
+    var chartGrid by mutableStateOf<ChartRecognizer.ChartGrid?>(null)
+        private set
+    var chartSample by mutableStateOf<ChartRecognizer.ChartSample?>(null)
+        private set
+    /** 空白阈值：格内与纸白接近的像素占比达到该值即判空 */
+    var chartThreshold by mutableFloatStateOf(0.55f)
+        private set
+    var chartAutoAligned by mutableStateOf(false)
+        private set
+    var chartBusy by mutableStateOf(false)
+        private set
+    var chartRefineRunning by mutableStateOf(false)
+        private set
+    /** 本次识别是否由自动检测得到的网格（false = 用了默认网格兜底） */
+    var chartDetected by mutableStateOf(false)
+        private set
+    private var chartToken = 0
 
     /** 裁剪框（工作图像素坐标系），null = 不在裁剪流程中 */
     var cropRect by mutableStateOf<CropRect?>(null)
@@ -845,6 +875,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             screen = Screen.HOME
             true
         }
+        Screen.CHART_CALIBRATE -> {
+            screen = Screen.HOME
+            true
+        }
         Screen.HOME -> false
     }
 
@@ -1490,6 +1524,184 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 toast = "已复刻「${entity.name}」"
             } catch (e: Exception) {
                 lastError = "复刻失败：${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+    }
+
+    // ---------- 色号图识别 ----------
+
+    /**
+     * 导入别人做好的拼豆图纸（网格 + 每格颜色 + 色号文字）。
+     *
+     * 解码上限 2600px：色号图的价值全在格子里那几个字，压到 1600 以下 OCR 和
+     * 取色都会糊。检测失败不拦用户——直接给一张居中的默认网格进校准页，
+     * 手动调列数/格子大小也能落图。
+     */
+    fun onChartPicked(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val resolver = getApplication<Application>().contentResolver
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                require(bounds.outWidth > 0 && bounds.outHeight > 0) { "图片解码失败" }
+
+                var sample = 1
+                while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 2600) sample *= 2
+                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                val bmp = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+                    ?: error("图片解码失败")
+                val px = IntArray(bmp.width * bmp.height)
+                bmp.getPixels(px, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+                Triple(bmp, px, intArrayOf(bmp.width, bmp.height))
+            }.onSuccess { (bmp, px, size) ->
+                val w = size[0]
+                val h = size[1]
+                val detected = ChartRecognizer.detect(px, w, h)
+                val grid = detected ?: ChartRecognizer.ChartGrid(
+                    cols = 29,
+                    rows = 29,
+                    cellW = minOf(w, h) / 29.0,
+                    cellH = minOf(w, h) / 29.0,
+                    offsetX = (w - minOf(w, h)) / 2.0,
+                    offsetY = (h - minOf(w, h)) / 2.0,
+                )
+                startNewProject()
+                chartBitmap = bmp
+                chartPixels = px
+                chartW = w
+                chartH = h
+                chartGrid = grid
+                chartDetected = detected != null
+                chartAutoAligned = false
+                chartThreshold = 0.55f
+                chartSample = null
+                importError = null
+                resampleChart(debounce = false) {
+                    screen = Screen.CHART_CALIBRATE
+                    if (detected == null) {
+                        toast = "没自动识别到网格，请手动调列数和格子大小"
+                    }
+                }
+            }.onFailure { e ->
+                importError = e.message ?: "图纸导入失败"
+                toast = "图纸导入失败：${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+    }
+
+    fun chartSetCols(n: Int) {
+        val g = chartGrid ?: return
+        chartGrid = g.withCols(n)
+        chartAutoAligned = false
+        resampleChart()
+    }
+
+    fun chartSetRows(n: Int) {
+        val g = chartGrid ?: return
+        chartGrid = g.withRows(n)
+        chartAutoAligned = false
+        resampleChart()
+    }
+
+    fun chartSetCellSize(px: Float) {
+        val g = chartGrid ?: return
+        chartGrid = g.withCellSize(px.toDouble())
+        chartAutoAligned = false
+        resampleChart()
+    }
+
+    /** 网格整体挪一格（不是一像素）：手指拖不准时用按钮对齐 */
+    fun chartNudge(dx: Int, dy: Int) {
+        val g = chartGrid ?: return
+        chartGrid = g.copy(
+            offsetX = g.offsetX + dx * g.cellW,
+            offsetY = g.offsetY + dy * g.cellH,
+        )
+        chartAutoAligned = false
+        resampleChart()
+    }
+
+    /** 手指拖拽：按屏幕像素直接挪网格（换算在 UI 层做） */
+    fun chartMoveBy(dx: Float, dy: Float) {
+        val g = chartGrid ?: return
+        chartGrid = g.copy(offsetX = g.offsetX + dx, offsetY = g.offsetY + dy)
+        chartAutoAligned = false
+        resampleChart()
+    }
+
+    fun chartSetThreshold(v: Float) {
+        chartThreshold = v.coerceIn(0.2f, 0.95f)
+        resampleChart()
+    }
+
+    /** 智能对齐：在梯度曲线上把网格线贴到真实网格线上 */
+    fun chartRefine() {
+        val px = chartPixels ?: return
+        val w = chartW
+        val h = chartH
+        val g = chartGrid ?: return
+        if (chartRefineRunning) return
+        chartRefineRunning = true
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val refined = ChartRecognizer.refine(px, w, h, g)
+                withContext(Dispatchers.Main) {
+                    chartGrid = refined
+                    chartAutoAligned = true
+                    toast = "已按网格线对齐"
+                }
+                resampleChart()
+            } finally {
+                withContext(Dispatchers.Main) { chartRefineRunning = false }
+            }
+        }
+    }
+
+    /**
+     * 重新采样 + 生成预览缩略图。网格每动一次都跑，属于热路径：
+     * 采样 O(格数 × 格内像素/步长)，400×400 格在 2000px 图上是 16 万次取色，
+     * 必须丢到 Default 线程。token 保证只有最后一次结果能落到 state。
+     */
+    private fun resampleChart(debounce: Boolean = true, onDone: (() -> Unit)? = null) {
+        val px = chartPixels ?: return
+        val g = chartGrid ?: return
+        val w = chartW
+        val h = chartH
+        val th = chartThreshold
+        chartToken++
+        val token = chartToken
+        chartBusy = true
+        viewModelScope.launch(Dispatchers.Default) {
+            if (debounce) delay(90)
+            if (token != chartToken) return@launch
+            val sample = ChartRecognizer.sample(px, w, h, g, th)
+            withContext(Dispatchers.Main) {
+                if (token != chartToken) return@withContext
+                chartSample = sample
+                chartBusy = false
+                onDone?.invoke()
+            }
+        }
+    }
+
+    /** 校准完落图纸：采样色 → 色卡最近色 → 预览页 */
+    fun chartToPattern() {
+        val sample = chartSample ?: return
+        val palette = selectedPalette ?: return
+        if (sample.filledCells == 0) {
+            toast = "这组网格没采到颜色，调一下列数或格子大小"
+            return
+        }
+        genState = GenState.Running(GenerationStage.MAP, 0.4f)
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val result = ChartRecognizer.toPattern(sample, palette)
+                genState = GenState.Done(result)
+                saveAfterGenerate(result)
+                withContext(Dispatchers.Main) { screen = Screen.PREVIEW }
+            } catch (e: Exception) {
+                genState = GenState.Error(e.message ?: "图纸生成失败")
+                withContext(Dispatchers.Main) { toast = "图纸生成失败：${e.message}" }
             }
         }
     }
