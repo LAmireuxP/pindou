@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  单色层（Android 13 主题图标）：只有两个带孔圆环，系统按壁纸取色填充。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M55.8,67.5 a11.2,11.2 0 1,0 22.4,0 a11.2,11.2 0 1,0 -22.4,0 Z M63.2,67.5 a3.8,3.8 0 1,0 7.6,0 a3.8,3.8 0 1,0 -7.6,0 Z M21.6,45 a21.4,21.4 0 1,0 42.8,0 a21.4,21.4 0 1,0 -42.8,0 Z M35.6,45 a7.4,7.4 0 1,0 14.8,0 a7.4,7.4 0 1,0 -14.8,0 Z" />
+</vector>

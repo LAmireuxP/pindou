@@ -1,20 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  自适应图标前景：七颗拼豆拼成一朵花（六瓣 r7.15 + 花心 r9.1，每颗开孔）。
-  豆与豆之间留 2.6dp 白缝，小尺寸下仍是 7 个独立圆点，不会被糊成一坨。
-  全部豆孔与豆身写在同一个 evenOdd path 里，一层渐变即可，渲染开销最小。
+  自适应图标前景：两颗拼豆——珊瑚色大豆在前，芥末黄小豆在右下、被大豆的白缝压住一角。
+  只用两个纯色 + 白缝，不做渐变；豆径 21.4/11.2dp，全部图形落在半径 28dp 内，任何遮罩都不裁。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillType="evenOdd" android:pathData="M46.85,36.5 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M51.25,36.5 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M62.01,45.25 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M66.41,45.25 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M62.01,62.75 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M66.41,62.75 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M46.85,71.5 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M51.25,71.5 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M31.69,62.75 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M36.09,62.75 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M31.69,45.25 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M36.09,45.25 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M44.9,54 a9.1,9.1 0 1,0 18.2,0 a9.1,9.1 0 1,0 -18.2,0 Z M50.5,54 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient android:type="linear" android:startX="24" android:startY="22" android:endX="84" android:endY="86">
-                <item android:color="#FF4F7DF7" android:offset="0" />
-                <item android:color="#FF9A6BEE" android:offset="0.52" />
-                <item android:color="#FFFF6FA8" android:offset="1" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    <path android:fillColor="#E8A33D" android:pathData="M55.8,67.5 a11.2,11.2 0 1,0 22.4,0 a11.2,11.2 0 1,0 -22.4,0 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M63.2,67.5 a3.8,3.8 0 1,0 7.6,0 a3.8,3.8 0 1,0 -7.6,0 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M19.6,45 a23.4,23.4 0 1,0 46.8,0 a23.4,23.4 0 1,0 -46.8,0 Z" />
+    <path android:fillColor="#E4553D" android:pathData="M21.6,45 a21.4,21.4 0 1,0 42.8,0 a21.4,21.4 0 1,0 -42.8,0 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M35.6,45 a7.4,7.4 0 1,0 14.8,0 a7.4,7.4 0 1,0 -14.8,0 Z" />
 </vector>
