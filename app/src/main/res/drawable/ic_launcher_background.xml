@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  自适应图标背景：纯白 #FFFFFF。与参考图标一致，颜色全部交给前景的渐变线，系统深色模式下也不会反色压成黑块。
+  自适应图标背景：纯白 #FFFFFF。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"

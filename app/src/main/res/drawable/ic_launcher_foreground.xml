@@ -1,26 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  自适应图标前景：豆板 + 四颗拼豆。参考课堂笔记图标的语言——白底、只有线是渐变、
-  stroke 全部圆头、图案占 62/108 落在安全区内。
-  Android vector 不支持渐变描边，所以线用「外轮廓 + 内挖空」的 evenOdd 填充实现，
-  视觉等价于 4.8dp 的渐变圆角描边。
+  自适应图标前景：七颗拼豆拼成一朵花（六瓣 r7.7 + 花心 r9.8，每颗开孔）。
+  豆与豆之间留 2.7dp 白缝，小尺寸下仍是 7 个独立圆点，不会被糊成一坨。
+  全部豆孔与豆身写在同一个 evenOdd path 里，一层渐变即可，渲染开销最小。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillType="evenOdd" android:pathData="M41,23 H67 A18,18 0 0,1 85,41 V67 A18,18 0 0,1 67,85 H41 A18,18 0 0,1 23,67 V41 A18,18 0 0,1 41,23 Z M41,27.8 H67 A13.2,13.2 0 0,1 80.2,41 V67 A13.2,13.2 0 0,1 67,80.2 H41 A13.2,13.2 0 0,1 27.8,67 V41 A13.2,13.2 0 0,1 41,27.8 Z">
+    <path android:fillType="evenOdd" android:pathData="M46.85,36.5 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M51.25,36.5 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M62.01,45.25 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M66.41,45.25 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M62.01,62.75 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M66.41,62.75 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M46.85,71.5 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M51.25,71.5 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M31.69,62.75 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M36.09,62.75 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M31.69,45.25 a7.15,7.15 0 1,0 14.3,0 a7.15,7.15 0 1,0 -14.3,0 Z M36.09,45.25 a2.75,2.75 0 1,0 5.5,0 a2.75,2.75 0 1,0 -5.5,0 Z M44.9,54 a9.1,9.1 0 1,0 18.2,0 a9.1,9.1 0 1,0 -18.2,0 Z M50.5,54 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0 Z">
         <aapt:attr name="android:fillColor">
-            <gradient android:type="linear" android:startX="24" android:startY="24" android:endX="84" android:endY="84">
-                <item android:color="#FF4F7DF7" android:offset="0" />
-                <item android:color="#FF9A6BEE" android:offset="0.52" />
-                <item android:color="#FFFF6FA8" android:offset="1" />
-            </gradient>
-        </aapt:attr>
-    </path>
-    <path android:fillType="evenOdd" android:pathData="M36.3,42.1 a5.8,5.8 0 1,0 11.6,0 a5.8,5.8 0 1,0 -11.6,0 Z M39.9,42.1 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 Z M36.3,65.9 a5.8,5.8 0 1,0 11.6,0 a5.8,5.8 0 1,0 -11.6,0 Z M39.9,65.9 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 Z M60.1,42.1 a5.8,5.8 0 1,0 11.6,0 a5.8,5.8 0 1,0 -11.6,0 Z M63.7,42.1 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 Z M60.1,65.9 a5.8,5.8 0 1,0 11.6,0 a5.8,5.8 0 1,0 -11.6,0 Z M63.7,65.9 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient android:type="linear" android:startX="24" android:startY="24" android:endX="84" android:endY="84">
+            <gradient android:type="linear" android:startX="24" android:startY="22" android:endX="84" android:endY="86">
                 <item android:color="#FF4F7DF7" android:offset="0" />
                 <item android:color="#FF9A6BEE" android:offset="0.52" />
                 <item android:color="#FFFF6FA8" android:offset="1" />
