@@ -60,8 +60,26 @@ class ConversionEvalHarness {
                 val colorCount = r.cells.filter { it >= 0 }.distinct().size
                 stats.appendLine(
                     "$name $cname 用色 $colorCount 色号, ${r.cells.count { it >= 0 }} 格, " +
-                        "杂点率 ${"%.2f".format(speckleRate(r.cells, gridW, gridH) * 100)}%, ${r.elapsedMs}ms",
+                        "杂点率 ${"%.2f".format(speckleRate(r.cells, gridW, gridH) * 100)}%, ${r.elapsedMs}ms | " +
+                        r.quality.summary(),
                 )
+            }
+
+            // 自动优选：候选排序 + 每个候选单图（仅 user_test，便于肉眼比对）
+            val base = GeneratorOptions(gridW = gridW, gridH = gridH, filterLevel = FilterLevel.MEDIUM)
+            val outcome = AutoTuner.sweep(
+                pixels, w, h, base, palette,
+                maxColorsOptions = AutoTuner.defaultColorOptions(base),
+            )
+            if (outcome != null) {
+                stats.appendLine("$name 自动优选 → ${outcome.best.filterLevel.label} / " +
+                    "${outcome.best.maxColors?.let { "$it 色" } ?: "不限色"} 得分 ${outcome.best.score}")
+                outcome.all.sortedByDescending { it.score }.forEachIndexed { i, c ->
+                    stats.appendLine("   #${i + 1} ${c.filterLevel.label}/${c.maxColors ?: "不限"} " +
+                        "= ${c.score} 分 · 用色 ${c.result.quality.colorCount} · 均差 " +
+                        "${"%.2f".format(c.result.quality.meanDeltaE)}")
+                    if (name == "user_test") writePattern(File(outDir, "user_test_auto_$i.png"), c.result, palette)
+                }
             }
 
             // 对比行：原图缩略 | 无 | 低 | 中 | 高，统一高度
@@ -86,6 +104,20 @@ class ConversionEvalHarness {
         }
         File(outDir, "stats.txt").writeText(stats.toString())
         println(stats)
+    }
+
+    /** 单张图纸 8px/格 */
+    private fun writePattern(file: File, r: PatternResult, palette: com.pindou.app.core.palette.BeadPalette) {
+        val cellPx = 8
+        val w = r.width * cellPx
+        val h = r.height * cellPx
+        val img = IntArray(w * h) { 0xFFF6F6F6.toInt() }
+        for (gy in 0 until r.height) for (gx in 0 until r.width) {
+            val idx = r.cells[gy * r.width + gx]
+            if (idx < 0) continue
+            fillRect(img, w, gx * cellPx, gy * cellPx, cellPx, cellPx, palette.colors[idx].argb)
+        }
+        writePng(file, img, w, h)
     }
 
     /** 杂点率：与 8 邻域众数不同的格子占比，越低越"干净" */

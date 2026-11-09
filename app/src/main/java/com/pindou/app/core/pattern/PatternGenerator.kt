@@ -28,6 +28,10 @@ data class PatternResult(
     val cells: IntArray,
     val palette: BeadPalette,
     val elapsedMs: Long,
+    /** 质量评分；历史数据/测试构造的结果为 EMPTY（score=0） */
+    val quality: QualityReport = QualityReport.EMPTY,
+    /** 生成时用的过滤档位，回显给 UI（自动优选后告诉用户选了哪档） */
+    val filterLevel: FilterLevel = FilterLevel.MEDIUM,
 ) {
     /** 各色号用量（索引 → 数量），按数量降序 */
     fun usage(): List<Pair<Int, Int>> {
@@ -180,6 +184,17 @@ object PatternGenerator {
             )
         }
 
+        // 参照采样：未平滑的面积平均，代表"原图在目标网格上真实的样子"。
+        // 边缘还原与质量评分共用这一份；用当前档位的 sample 会把平滑后的
+        // 图当参照，边界早就没了，还原与评分都失去意义。
+        val refSample = if (options.filterLevel == FilterLevel.NONE) {
+            sample
+        } else {
+            ImagePreprocessor.sample(
+                exposurePixels, srcW, srcH, options.gridW, options.gridH, FilterLevel.NONE,
+            )
+        }
+
         // ⑥c 最终限色：用户显式限色时把色号数压到 maxColors 以内
         if (options.maxColors != null) {
             onStage(GenerationStage.LIMIT, 0f)
@@ -188,9 +203,21 @@ object PatternGenerator {
         }
         onStage(GenerationStage.CLEAN, 1f)
 
+        // ⑦ 质量评分：拿"原始采样色"和"最终色号色"逐格比色差。
+        //    必须在这里算——sample 在曝光/平滑之后、量化之前，是这张图在
+        //    目标网格上"理论上应该长什么样"的唯一参照；出去之后就没了。
+        //    参照必须"未平滑"：用了当前档位的 sample，平滑越强参照越糊，
+        //    评分会把糊掉的图判成"和参照一样"——档位之间分数就拉不开了。
+        val quality = QualityScorer.score(
+            refSample, options.gridW, options.gridH, cleaned,
+            palette.colors.map { it.argb }.toIntArray(),
+        )
+
         val result = PatternResult(
             options.gridW, options.gridH, cleaned, palette,
             (System.nanoTime() - startNanos) / 1_000_000,
+            quality = quality,
+            filterLevel = options.filterLevel,
         )
         onStage(GenerationStage.DONE, 1f)
         return result

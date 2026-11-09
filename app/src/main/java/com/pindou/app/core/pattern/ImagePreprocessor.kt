@@ -128,6 +128,17 @@ object ImagePreprocessor {
                 r[i] = accR[i] / c
                 g[i] = accG[i] / c
                 b[i] = accB[i] / c
+            } else {
+                // 源图比 2× 中间图还小的时候（例如 8×8 图配 8×8 网格，中间图 16×16），
+                // 只有偶数下标落到源像素上，奇数下标的格子计数为 0。
+                // 留 0 会被当成黑色参与 2×2 平均，整格颜色被拉暗——直接按中心点
+                // 回源图取色补上，等价于最近邻放大。
+                val sx = ((i % iw) * srcW / iw).coerceIn(0, srcW - 1)
+                val sy = ((i / iw) * srcH / ih).coerceIn(0, srcH - 1)
+                val p = pixels[sy * srcW + sx]
+                r[i] = ((p shr 16) and 0xFF).toDouble()
+                g[i] = ((p shr 8) and 0xFF).toDouble()
+                b[i] = (p and 0xFF).toDouble()
             }
         }
 

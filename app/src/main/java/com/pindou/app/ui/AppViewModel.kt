@@ -26,6 +26,8 @@ import com.pindou.app.core.image.ImageTransforms
 import com.pindou.app.core.pattern.GenerationStage
 import com.pindou.app.core.pattern.BpatCodec
 import com.pindou.app.core.pattern.GeneratorOptions
+import com.pindou.app.core.pattern.AutoTuner
+import com.pindou.app.core.pattern.FilterLevel
 import com.pindou.app.core.pattern.PatternGenerator
 import com.pindou.app.core.pattern.PatternResult
 import kotlinx.coroutines.Dispatchers
@@ -131,6 +133,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var filterLevel by mutableStateOf(com.pindou.app.core.pattern.FilterLevel.MEDIUM)
 
     var genState by mutableStateOf<GenState>(GenState.Idle)
+        private set
+
+    /** 自动优选结果说明（"自动优选：高过滤 · 还原度 79 …"），null = 未跑过 */
+    var autoTuneInfo by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * 自动优选的逐档得分（过滤档名 → 该档最高分，按档位顺序）。
+     * 让用户看见"为什么选这一档"——只看结论是黑箱，看到四档分数才知道
+     * 差距有多大、选错一档会损失多少。
+     */
+    var autoTuneScores by mutableStateOf<List<Pair<String, Int>>>(emptyList())
+        private set
+
+    /** 自动优选进行中（要多跑几组参数，UI 单独禁用按钮） */
+    var autoTuneRunning by mutableStateOf(false)
         private set
 
     // 施工模式
@@ -408,21 +426,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val pixels = imagePixels ?: return
         val palette = selectedPalette ?: return
         projectPages = emptyList()
+        // 手动生成 = 用户自己改了参数，之前的自动优选结论失效
+        autoTuneInfo = null
+        autoTuneScores = emptyList()
         genState = GenState.Running(GenerationStage.DOWNSAMPLE, 0f)
         viewModelScope.launch(Dispatchers.Default) {
             try {
                 val result = PatternGenerator.generate(
                     pixels, imageW, imageH,
-                    GeneratorOptions(
-                        gridW = gridW.coerceIn(5, 200),
-                        gridH = gridH.coerceIn(5, 200),
-                        maxColors = if (limitColors) maxColors.coerceIn(1, 64) else null,
-                        cleanupEnabled = true,
-                        ditheringEnabled = dithering,
-                        removeBackground = removeBackground,
-                        backgroundTolerance = backgroundTolerance.toDouble(),
-                        filterLevel = filterLevel,
-                    ),
+                    currentOptions(),
                     palette,
                 ) { stage, progress ->
                     genState = GenState.Running(stage, progress)
@@ -432,6 +444,76 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.Main) { screen = Screen.PREVIEW }
             } catch (e: Exception) {
                 genState = GenState.Error(e.message ?: "生成失败")
+            }
+        }
+    }
+
+    /** 当前 UI 参数 → 管线参数；generate 与 autoTune 共用，避免两处漂移 */
+    private fun currentOptions(): GeneratorOptions = GeneratorOptions(
+        gridW = gridW.coerceIn(5, 200),
+        gridH = gridH.coerceIn(5, 200),
+        maxColors = if (limitColors) maxColors.coerceIn(1, 64) else null,
+        cleanupEnabled = true,
+        ditheringEnabled = dithering,
+        removeBackground = removeBackground,
+        backgroundTolerance = backgroundTolerance.toDouble(),
+        filterLevel = filterLevel,
+    )
+
+    /**
+     * 自动优选：跑 4 个过滤档（未限色时再加一个 20 色档），按还原度评分取最高。
+     *
+     * 选中后把结果写回 UI 参数（过滤档/限色），用户能看见"它替我做了什么选择"，
+     * 下次手动生成会沿用同一组参数——不是一次性黑箱。
+     */
+    fun autoTune() {
+        val pixels = imagePixels ?: return
+        val palette = selectedPalette ?: return
+        if (autoTuneRunning) return
+        val base = currentOptions()
+        projectPages = emptyList()
+        autoTuneRunning = true
+        autoTuneInfo = null
+        autoTuneScores = emptyList()
+        genState = GenState.Running(GenerationStage.DOWNSAMPLE, 0f)
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val outcome = AutoTuner.sweep(
+                    pixels, imageW, imageH, base, palette,
+                    maxColorsOptions = AutoTuner.defaultColorOptions(base),
+                ) { done, total, _ ->
+                    // 进度按组数推进，视觉上要动；最后一组留给评分/落库
+                    genState = GenState.Running(GenerationStage.MAP, done.toFloat() / total)
+                } ?: throw IllegalStateException("没有可用参数组合")
+
+                val best = outcome.best
+                filterLevel = best.filterLevel
+                if (best.maxColors != null) {
+                    limitColors = true
+                    maxColors = best.maxColors
+                } else {
+                    limitColors = false
+                }
+                // 与"用户原来那组参数"对比，告诉他人话上的收益
+                val baseline = outcome.all.firstOrNull {
+                    it.filterLevel == base.filterLevel && it.maxColors == base.maxColors
+                }
+                val gain = if (baseline != null) best.score - baseline.score else 0
+                autoTuneScores = FilterLevel.entries.mapNotNull { lvl ->
+                    outcome.all.filter { it.filterLevel == lvl }
+                        .maxByOrNull { it.score }
+                        ?.let { lvl.label to it.score }
+                }
+                autoTuneInfo = "自动优选：${best.filterLevel.label} · " +
+                    (best.maxColors?.let { "$it 色" } ?: "不限色") + " · " + best.result.quality.summary() +
+                    if (gain > 0) " · 比原参数高 $gain 分" else ""
+                genState = GenState.Done(best.result)
+                saveAfterGenerate(best.result)
+                withContext(Dispatchers.Main) { screen = Screen.PREVIEW }
+            } catch (e: Exception) {
+                genState = GenState.Error(e.message ?: "自动优选失败")
+            } finally {
+                autoTuneRunning = false
             }
         }
     }

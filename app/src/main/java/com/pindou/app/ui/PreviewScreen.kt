@@ -179,10 +179,28 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
 
         // 统计条：三段等分，数字用 titleLarge，标签用 labelSmall
         ShCard(modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(vertical = Spacing.sm)) {
-                Stat("$total", "总粒数", Modifier.weight(1f))
-                Stat("${usage.size}", "颜色数", Modifier.weight(1f))
-                Stat("${result.elapsedMs}ms", "生成耗时", Modifier.weight(1f))
+            Column {
+                Row(Modifier.padding(vertical = Spacing.sm)) {
+                    Stat("$total", "总粒数", Modifier.weight(1f))
+                    Stat("${usage.size}", "颜色数", Modifier.weight(1f))
+                    // 历史项目/编辑后的结果没有评分（EMPTY.score=0），显示占位而不是"0 分"
+                    val q = result.quality
+                    Stat(if (q.score > 0) "${q.score}" else "—", "还原度", Modifier.weight(1f))
+                    Stat("${result.elapsedMs}ms", "生成耗时", Modifier.weight(1f))
+                }
+                // 评分明细：分数是结论，这三个比例是原因，用户可以据此决定换不换参数
+                if (result.quality.score > 0) {
+                    Text(
+                        "${result.quality.label} · 碎点 ${"%.1f".format(result.quality.breakRate * 100)}%" +
+                            " · 糊边 ${"%.1f".format(result.quality.flattenRate * 100)}%" +
+                            " · 平均色差 ${"%.1f".format(result.quality.meanDeltaE)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.md, vertical = Spacing.xs),
+                    )
+                }
             }
         }
 

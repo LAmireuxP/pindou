@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +26,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.pindou.app.core.pattern.GenerationStage
 import com.pindou.app.ui.shadcn.Button
+import com.pindou.app.ui.shadcn.OutlinedButton
 import com.pindou.app.ui.shadcn.ShCard
 import com.pindou.app.ui.shadcn.ShChip
 import com.pindou.app.ui.shadcn.ShPageHeader
@@ -397,29 +400,98 @@ fun ParamsScreen(vm: AppViewModel) {
             else -> {}
         }
 
+        // 自动优选的结论：说明它替用户选了什么，以及比原参数高多少分
+        vm.autoTuneInfo?.let { info ->
+            ShCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(Spacing.md)) {
+                    Text(
+                        info,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    // 逐档得分：同一张图在四个过滤档下的还原度，
+                    // 选中档高亮。用户能看见"选错一档损失几分"，不是黑箱。
+                    if (vm.autoTuneScores.isNotEmpty()) {
+                        Spacer(Modifier.height(Spacing.sm))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        ) {
+                            val best = vm.autoTuneScores.maxOf { it.second }
+                            vm.autoTuneScores.forEach { (label, score) ->
+                                val picked = score == best
+                                Surface(
+                                    modifier = Modifier.weight(1f),
+                                    shape = MaterialTheme.shapes.small,
+                                    color = if (picked) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant,
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(vertical = 6.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                    ) {
+                                        Text(
+                                            label.removeSuffix("过滤"),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Text(
+                                            "$score",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = if (picked) MaterialTheme.colorScheme.onPrimaryContainer
+                                            else MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 生成按钮：文字模式用文字源重新栅格化，图片模式走常规 generate
         val isTextMode = vm.textSource != null
-        Button(
-            onClick = {
-                val text = vm.textSource
-                if (text != null) vm.regenerateFromText(text) else vm.generate()
-            },
-            enabled = palette != null &&
-                (if (isTextMode) vm.textSource != null else vm.imagePixels != null) &&
-                vm.genState !is GenState.Running,
+        val ready = palette != null &&
+            (if (isTextMode) vm.textSource != null else vm.imagePixels != null)
+        val idle = vm.genState !is GenState.Running
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = Spacing.lg)
-                .height(48.dp),
+                .padding(bottom = Spacing.lg),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            if (vm.genState is GenState.Running) {
-                CircularProgressIndicator(
-                    modifier = Modifier.height(18.dp).widthIn(min = 18.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
+            // 自动优选只对图片有意义（文字模式的栅格化参数不同），文字模式隐藏
+            if (!isTextMode) {
+                OutlinedButton(
+                    onClick = { vm.autoTune() },
+                    enabled = ready && idle && !vm.autoTuneRunning,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                ) {
+                    Text("✦ 自动优选")
+                }
             }
-            Text("生成图纸", modifier = Modifier.padding(start = 8.dp))
+            Button(
+                onClick = {
+                    val text = vm.textSource
+                    if (text != null) vm.regenerateFromText(text) else vm.generate()
+                },
+                enabled = ready && idle,
+                modifier = Modifier
+                    .weight(if (isTextMode) 1f else 1.25f)
+                    .height(48.dp),
+            ) {
+                if (vm.genState is GenState.Running) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.height(18.dp).widthIn(min = 18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+                Text("生成图纸", modifier = Modifier.padding(start = 8.dp))
+            }
         }
     }
 }
