@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
@@ -33,15 +38,20 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import com.pindou.app.core.image.CropRect
 import com.pindou.app.core.image.ImageTransforms
+import com.pindou.app.ui.shadcn.ShCard
 import com.pindou.app.ui.shadcn.Button
 import com.pindou.app.ui.shadcn.OutlinedButton
 import com.pindou.app.ui.shadcn.ShChip
@@ -51,6 +61,7 @@ import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** 一次拖动手势的语义：移动 / 角柄缩放 / 重新框选 */
@@ -93,6 +104,7 @@ private enum class CropAspect(val label: String) {
  * 裁剪与旋转页：拖动选区、角柄缩放、旋转/镜像、按网格比例锁定。
  * 确认后才真正裁剪像素；旋转与镜像即时生效（作用于工作图）。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CropScreen(vm: AppViewModel) {
     val bitmap = vm.imagePreview
@@ -105,6 +117,17 @@ fun CropScreen(vm: AppViewModel) {
         mutableStateOf(if (vm.pixelArtGrid != null) CropAspect.GRID else CropAspect.SQUARE)
     }
     var guides by remember { mutableStateOf(CropGuides.THIRDS) }
+    val preview = vm.cropPreview
+    // 位图包装只做一次：每帧 asImageBitmap 会新建 wrapper，画布每帧都会重画
+    val previewImage = remember(preview) { preview?.image?.asImageBitmap() }
+
+    /** 网格尺寸变了就把选区吸附到新比例的最大居中框：否则「定了网格」和框是两张皮 */
+    fun snapToGridRatio() {
+        if (imgW <= 0 || imgH <= 0) return
+        val ratio = if (vm.gridH > 0) vm.gridW.toFloat() / vm.gridH else 1f
+        aspect = CropAspect.GRID
+        vm.updateCropRect(ImageTransforms.centeredAspect(imgW, imgH, ratio))
+    }
 
     Column(
         modifier = Modifier
@@ -114,7 +137,7 @@ fun CropScreen(vm: AppViewModel) {
     ) {
         ShPageHeader(
             title = "裁剪与旋转",
-            subtitle = "拖动选区、四角调整大小；框选更大更准",
+            subtitle = "先定网格尺寸，框内直接看每格落什么色",
             modifier = Modifier.padding(top = Spacing.lg),
         )
 
@@ -162,6 +185,10 @@ fun CropScreen(vm: AppViewModel) {
                         CropAspect.GRID -> if (vm.gridH > 0) vm.gridW.toFloat() / vm.gridH else 1f
                     },
                     guides = guides,
+                    preview = preview,
+                    previewImage = previewImage,
+                    gridW = vm.gridW,
+                    gridH = vm.gridH,
                     onRectChange = { vm.updateCropRect(it) },
                 )
             }
@@ -170,6 +197,10 @@ fun CropScreen(vm: AppViewModel) {
         Text(
             buildString {
                 append("选区 ${rect.width.roundToInt()}×${rect.height.roundToInt()} px")
+                append(" · 网格 ${vm.gridW}×${vm.gridH}")
+                preview?.takeIf { it.gridW == vm.gridW && it.gridH == vm.gridH }
+                    ?.let { append(" · ${it.colorCount} 色") }
+                if (vm.cropPreviewRunning) append(" · 预览计算中…")
                 when (aspect) {
                     CropAspect.SQUARE -> append(" · 锁定 1:1")
                     CropAspect.GRID -> append(" · 锁定 ${vm.gridW}:${vm.gridH}")
@@ -231,7 +262,10 @@ fun CropScreen(vm: AppViewModel) {
                 Text("重置", modifier = Modifier.padding(start = 4.dp))
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+        ) {
             ShChip(
                 text = "辅助线·${guides.label}",
                 selected = guides != CropGuides.NONE,
@@ -259,6 +293,71 @@ fun CropScreen(vm: AppViewModel) {
                     },
                 )
             }
+            ShChip(
+                text = if (vm.cropPreviewEnabled) "网格预览·开" else "网格预览·关",
+                selected = vm.cropPreviewEnabled,
+                onClick = { vm.toggleCropPreview() },
+            )
+        }
+
+        // 裁剪页就把网格定死：先看每格颜色，再决定框多大，下一步不用回来改
+        ShCard(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                ) {
+                    Text("网格", style = MaterialTheme.typography.labelLarge)
+                    GridStepper(value = vm.gridW) {
+                        vm.setCropGridWidth(it)
+                        snapToGridRatio()
+                    }
+                    Text("×", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    GridStepper(value = vm.gridH) {
+                        vm.setCropGridHeight(it)
+                        snapToGridRatio()
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "${vm.gridW * vm.gridH} 粒",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    vm.pixelArtGrid?.let { (aw, ah) ->
+                        ShChip(
+                            text = "原画 $aw×$ah",
+                            selected = vm.gridW == aw && vm.gridH == ah,
+                            onClick = {
+                                vm.applyArtGridAtCrop()
+                                snapToGridRatio()
+                            },
+                        )
+                    }
+                    listOf(24, 36, 48, 64, 100).forEach { w ->
+                        ShChip(
+                            text = "$w",
+                            selected = vm.gridW == w,
+                            onClick = {
+                                vm.setCropGridWidth(w)
+                                snapToGridRatio()
+                            },
+                        )
+                    }
+                    ShChip(
+                        text = if (vm.lockGridAspect) "锁比例" else "自由比例",
+                        selected = vm.lockGridAspect,
+                        onClick = { vm.toggleGridAspectLock() },
+                    )
+                }
+            }
         }
 
         Row(
@@ -285,7 +384,36 @@ fun CropScreen(vm: AppViewModel) {
     }
 }
 
-/** 选区叠加层：遮罩、辅助线、边框、角柄与手势 */
+/** 网格宽高步进器：−/值/+ 一组，40dp 触控高度，点一次改一格 */
+@Composable
+private fun GridStepper(value: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(
+            onClick = { onChange((value - 1).coerceIn(5, 200)) },
+            modifier = Modifier.size(34.dp),
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(0.dp),
+        ) {
+            Text("−", style = MaterialTheme.typography.labelLarge)
+        }
+        Text(
+            "$value",
+            modifier = Modifier.widthIn(min = 34.dp),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelLarge,
+        )
+        OutlinedButton(
+            onClick = { onChange((value + 1).coerceIn(5, 200)) },
+            modifier = Modifier.size(34.dp),
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(0.dp),
+        ) {
+            Text("+", style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+/** 选区叠加层：遮罩、网格着色、辅助线、边框、角柄与手势 */
 @Composable
 private fun CropOverlay(
     rect: CropRect,
@@ -294,6 +422,10 @@ private fun CropOverlay(
     imgH: Int,
     ratio: Float?,
     guides: CropGuides,
+    preview: CropGridPreview?,
+    previewImage: androidx.compose.ui.graphics.ImageBitmap?,
+    gridW: Int,
+    gridH: Int,
     onRectChange: (CropRect) -> Unit,
 ) {
     val currentRect by rememberUpdatedState(rect)
@@ -342,7 +474,15 @@ private fun CropOverlay(
                 )
             },
     ) {
-        drawCropUi(currentRect, scale, currentGuides)
+        drawCropUi(
+            rect = currentRect,
+            scale = scale,
+            guides = currentGuides,
+            preview = preview,
+            previewImage = previewImage,
+            gridW = gridW,
+            gridH = gridH,
+        )
     }
 }
 
@@ -395,7 +535,15 @@ private fun hitTest(
     }
 }
 
-private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, guides: CropGuides) {
+private fun DrawScope.drawCropUi(
+    rect: CropRect,
+    scale: Float,
+    guides: CropGuides,
+    preview: CropGridPreview?,
+    previewImage: androidx.compose.ui.graphics.ImageBitmap?,
+    gridW: Int,
+    gridH: Int,
+) {
     val cl = rect.left * scale
     val ct = rect.top * scale
     val cr = rect.right * scale
@@ -409,6 +557,44 @@ private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, guides: CropGuide
     drawRect(scrim, Offset(0f, cb), Size(size.width, (size.height - cb).coerceAtLeast(0f)))
     drawRect(scrim, Offset(0f, ct), Size(cl.coerceAtLeast(0f), h.coerceAtLeast(0f)))
     drawRect(scrim, Offset(cr, ct), Size((size.width - cr).coerceAtLeast(0f), h.coerceAtLeast(0f)))
+
+    // 选区内的网格着色：一趟 drawImage 铺开整张缩略位图（最近邻放大），
+    // 不是逐格 drawRect——后者 56×50 就 2800 次绘制，拖动时必然掉帧。
+    // 预览的 rect 与当前选区不一致（正在拖动 / 防抖还没算完）时不画，
+    // 否则色块会歪着跟手跑。此时只画网格线，位置永远准。
+    val matches = preview != null && previewImage != null && rectsMatch(preview.rect, rect)
+    if (w > 1f && h > 1f) {
+        if (matches) {
+            drawImage(
+                image = previewImage!!,
+                srcOffset = IntOffset.Zero,
+                srcSize = IntSize(previewImage.width, previewImage.height),
+                dstOffset = IntOffset(cl.roundToInt(), ct.roundToInt()),
+                dstSize = IntSize(
+                    w.roundToInt().coerceAtLeast(1),
+                    h.roundToInt().coerceAtLeast(1),
+                ),
+                filterQuality = FilterQuality.None,
+            )
+        }
+        val gw = if (matches) preview!!.gridW else gridW
+        val gh = if (matches) preview!!.gridH else gridH
+        val cellW = w / gw.coerceAtLeast(1)
+        val cellH = h / gh.coerceAtLeast(1)
+        // 每格小于 6px 时线宽和格子同量级，会糊成一片灰，这时不画线
+        if (min(cellW, cellH) >= 6f) {
+            val line = Color.White.copy(alpha = if (matches) 0.20f else 0.35f)
+            val lw = 1.dp.toPx()
+            for (i in 1 until gw) {
+                val x = cl + cellW * i
+                drawLine(line, Offset(x, ct), Offset(x, ct + h), lw)
+            }
+            for (j in 1 until gh) {
+                val y = ct + cellH * j
+                drawLine(line, Offset(cl, y), Offset(cl + w, y), lw)
+            }
+        }
+    }
 
     // 选区内辅助线
     if (w > 0f && h > 0f) {
@@ -449,6 +635,11 @@ private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, guides: CropGuide
     bars.forEach { (a, b) -> drawLine(Color.White, a, b, 13.dp.toPx(), cap = StrokeCap.Round) }
     bars.forEach { (a, b) -> drawLine(ClayColors.Primary, a, b, 7.dp.toPx(), cap = StrokeCap.Round) }
 }
+
+/** 预览矩形与当前选区是否同一个（拖动会产生亚像素差，0.5px 内视为一致） */
+private fun rectsMatch(a: CropRect, b: CropRect): Boolean =
+    abs(a.left - b.left) < 0.5f && abs(a.top - b.top) < 0.5f &&
+        abs(a.right - b.right) < 0.5f && abs(a.bottom - b.bottom) < 0.5f
 
 /** 拖一条边：自由模式只动该边；锁定比例时另一轴联动并保持原中心 */
 private fun edgeResize(

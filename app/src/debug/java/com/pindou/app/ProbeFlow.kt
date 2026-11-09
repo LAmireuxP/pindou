@@ -46,6 +46,34 @@ object ProbeFlow {
         sleep(800)
         shot("01_crop")
 
+        // 裁剪页网格预览：进页面就该出现每格色块，且与当前网格尺寸一致
+        waitUntil(20_000) { vm.cropPreview != null }
+        vm.cropPreview?.let {
+            say("cropPreview grid=${it.gridW}x${it.gridH} colors=${it.colorCount} elapsed=${it.elapsedMs}ms")
+        }
+        sleep(600)
+        shot("01_crop_preview")
+
+        // 裁剪页改网格：选区吸附 + 预览重算
+        val tPrev = SystemClock.elapsedRealtime()
+        vm.setCropGridWidth(48)
+        waitUntil(20_000) { vm.cropPreview?.gridW == 48 && vm.cropPreview?.gridH == vm.gridH }
+        say("cropGrid48 ${SystemClock.elapsedRealtime() - tPrev}ms grid=${vm.gridW}x${vm.gridH} colors=${vm.cropPreview?.colorCount}")
+        sleep(600)
+        shot("01b_crop_grid48")
+
+        // 裁剪页定的网格必须带进参数页，不能被「原画网格」检测覆盖
+        vm.setCropGridWidth(40)
+        waitUntil(20_000) { vm.cropPreview?.gridW == 40 }
+        say("cropGrid40 preview=${vm.cropPreview?.gridW}x${vm.cropPreview?.gridH} colors=${vm.cropPreview?.colorCount}")
+        vm.confirmCrop()
+        waitUntil(5_000) { vm.screen == Screen.PARAMS }
+        say("cropGridKept=${vm.gridW}x${vm.gridH} art=${vm.pixelArtGrid}")
+        vm.openCrop()
+        waitUntil(5_000) { vm.screen == Screen.CROP }
+        vm.applyArtGridAtCrop()
+        waitUntil(20_000) { vm.cropPreview?.gridW == vm.gridW }
+
         vm.confirmCrop()
         waitUntil(5_000) { vm.screen == Screen.PARAMS }
         say("artGrid=${vm.pixelArtGrid} crop=${vm.cropRect}")
