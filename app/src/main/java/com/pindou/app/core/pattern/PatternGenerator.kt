@@ -205,6 +205,16 @@ object PatternGenerator {
             )
         }
 
+        // ⑥d 小亮斑救援：眼睛高光、牙齿这类不足一格的白点，面积平均后只剩
+        //     一格灰，色卡映射一压就没了。用小深色块内的近白占比把它点回来。
+        //     放在所有清理之后：前面任何一轮众数/区域合并都会把单格白点吃掉。
+        val spot = sample.spot
+        if (art == null && spot != null) {
+            cleaned = HighlightRescue.apply(
+                cleaned, options.gridW, options.gridH, palette, spot, options.excludedCodes,
+            )
+        }
+
         // 参照采样：未平滑的面积平均，代表"原图在目标网格上真实的样子"。
         // 边缘还原与质量评分共用这一份；用当前档位的 sample 会把平滑后的
         // 图当参照，边界早就没了，还原与评分都失去意义。

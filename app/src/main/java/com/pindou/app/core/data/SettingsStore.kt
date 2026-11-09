@@ -22,8 +22,8 @@ class SettingsStore(private val context: Context) {
     }
 
     data class Snapshot(
-        val defaultGridW: Int = 29,
-        val defaultGridH: Int = 29,
+        val defaultGridW: Int = 48,
+        val defaultGridH: Int = 48,
         val defaultPaletteBrand: String = "MARD",
         val themeMode: String = "system",
     )
@@ -31,8 +31,8 @@ class SettingsStore(private val context: Context) {
     val flow: Flow<Snapshot> = context.dataStore.data.map { p -> p.toSnapshot() }
 
     private fun Preferences.toSnapshot() = Snapshot(
-        defaultGridW = this[GRID_W] ?: 29,
-        defaultGridH = this[GRID_H] ?: 29,
+        defaultGridW = this[GRID_W] ?: 48,
+        defaultGridH = this[GRID_H] ?: 48,
         defaultPaletteBrand = this[PALETTE_BRAND] ?: "MARD",
         themeMode = this[THEME_MODE] ?: "system",
     )

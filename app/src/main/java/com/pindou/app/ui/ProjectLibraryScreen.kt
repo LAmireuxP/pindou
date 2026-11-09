@@ -83,7 +83,7 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
         ShPageHeader(
-            title = "拼豆图纸",
+            title = "豆格",
             subtitle = "导入照片，生成可直接照着拼的图纸",
             modifier = Modifier.padding(top = Spacing.lg, bottom = Spacing.xxs),
         )

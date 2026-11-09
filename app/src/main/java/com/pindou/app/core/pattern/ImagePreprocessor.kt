@@ -64,6 +64,12 @@ class GridSample(
     val lab: FloatArray,
     val art: ArtGrid? = null,
     val edge: BooleanArray? = null,
+    /**
+     * 每格"近白像素"占比（0..100）。眼睛高光、牙齿这类嵌在深色块里的小亮斑
+     * 面积不足一格，面积平均后只剩一格浅灰；下游 [HighlightRescue] 靠这个
+     * 数值把高光格重新点成白豆。
+     */
+    val spot: ByteArray? = null,
 ) {
     val size: Int get() = argb.size
 }
@@ -180,7 +186,12 @@ object ImagePreprocessor {
         //     同一色号——这就是观感上最刺眼的"糊边"。这里只对格内亮度双峰明显
         //     的格子改取多数侧颜色，平地区域一个像素都不动。
         val edgeMask = BooleanArray(gridW * gridH)
-        sharpenEdgeCells(pixels, srcW, srcH, gridW, gridH, argb, edgeMask)
+        val spot = ByteArray(gridW * gridH)
+        sharpenEdgeCells(pixels, srcW, srcH, gridW, gridH, argb, edgeMask, spot)
+        // ①c 墨线优先：低网格（29×29）下一条 8px 描边只覆盖一格 20%，
+        //     面积平均后是浅灰，量化完就是断断续续的虚线。凡是"格内有墨、
+        //     但大部分面积仍是纸白"的格子，直接取墨色，线才连得起来。
+        inkLineCells(pixels, srcW, srcH, gridW, gridH, argb, edgeMask)
 
         val lab = FloatArray(argb.size * 3)
         for (i in argb.indices) {
@@ -189,7 +200,7 @@ object ImagePreprocessor {
             lab[i * 3 + 1] = l[1]
             lab[i * 3 + 2] = l[2]
         }
-        return GridSample(argb, lab, null, edgeMask)
+        return GridSample(argb, lab, null, edgeMask, spot)
     }
 
     /** 格内亮度双峰判据：标准差下限（挡住均匀纹理） */
@@ -206,6 +217,15 @@ object ImagePreprocessor {
 
     /** 细深色结构保留：深色侧最低占比（低于它仍按多数侧取色，避免噪点翻黑） */
     private const val EDGE_DARK_KEEP_SHARE = 0.22
+
+    /** "近白"亮度下限（0..255）：白豆、纸白底、眼球高光都落在这条线以上 */
+    private const val BRIGHT_L = 225.0
+
+    /** 细线桥接：深色占比下限（低于它连"擦到一格"都算不上） */
+    private const val BRIDGE_MIN_SHARE = 0.10f
+
+    /** 细线桥接：深色侧亮度上限（L 高于它的深色是阴影，不是墨线） */
+    private const val BRIDGE_INK_L = 120f
 
     /**
      * 边界格锐化：把"跨边界格子"的颜色换成占多数那一侧的平均色。
@@ -227,9 +247,11 @@ object ImagePreprocessor {
         gridH: Int,
         argb: IntArray,
         edgeMask: BooleanArray,
+        spot: ByteArray,
     ) {
         val n = gridW * gridH
         val count = IntArray(n)
+        val brightCount = IntArray(n)
         val sumL = DoubleArray(n)
         val sumL2 = DoubleArray(n)
         for (y in 0 until srcH) {
@@ -242,6 +264,7 @@ object ImagePreprocessor {
                     0.114 * (p and 0xFF)
                 val k = rowBase + (x.toLong() * gridW / srcW).toInt()
                 count[k]++
+                if (l >= BRIGHT_L) brightCount[k]++
                 sumL[k] += l
                 sumL2[k] += l * l
             }
@@ -253,6 +276,7 @@ object ImagePreprocessor {
         for (i in 0 until n) {
             val c = count[i]
             if (c < 4) continue
+            spot[i] = (brightCount[i] * 100 / c).toByte()
             val m = sumL[i] / c
             meanL[i] = m
             val varr = sumL2[i] / c - m * m
@@ -270,6 +294,11 @@ object ImagePreprocessor {
         val hiL = DoubleArray(n)
         val loR = DoubleArray(n); val loG = DoubleArray(n); val loB = DoubleArray(n)
         val hiR = DoubleArray(n); val hiG = DoubleArray(n); val hiB = DoubleArray(n)
+        // 深色侧统计：低网格下细线只占一格的一小半，按"多数侧"取色会判成白，
+        // 整条轮廓断成虚线。这里把深色侧的占比与颜色留下来，供第三遍桥接用。
+        val darkShare = FloatArray(n)
+        val darkArgb = IntArray(n)
+        val darkL = FloatArray(n) { Float.MAX_VALUE }
         for (y in 0 until srcH) {
             val rowBase = (y.toLong() * gridH / srcH).toInt() * gridW
             val row = y * srcW
@@ -306,14 +335,28 @@ object ImagePreprocessor {
             // 浅色底。只按"多数侧"取色会把它们整条抹掉（耳朵轮廓消失就是
             // 这么来的）。对比够强（亮度差 ≥ 34）且深色侧占到 22% 时改取
             // 深色侧，线条在量化后能留下一格，不会被背景吃掉。
-            val darkIsHi = hiMeanL > loMeanL
-            val darkCnt = if (darkIsHi) hc else lc
-            val darkMeanL = if (darkIsHi) hiMeanL else loMeanL
-            val lightMeanL = if (darkIsHi) loMeanL else hiMeanL
+            //
+            // 注意方向：hi 分组是"亮度 ≥ 格均值"的那一半，天然更亮；深色组是 lo。
+            // 早前这里写成 darkIsHi = hiMeanL > loMeanL 并在随后取 hiMeanL 当
+            // darkMeanL，判断恒为反向——细线保留规则反而把深色格刷成纯白，
+            // 眼睛、耳朵描边被整片吃掉。判据必须是"哪一组更暗"。
+            val lightMeanL = max(loMeanL, hiMeanL)
+            val darkMeanL = min(loMeanL, hiMeanL)
+            val darkCnt = if (loMeanL <= hiMeanL) lc else hc
+
+            // 记录深色侧（不论最终选没选它）
+            val darkIsLo = loMeanL <= hiMeanL
+            val dR = ((if (darkIsLo) loR[i] else hiR[i]) / darkCnt + 0.5).toInt().coerceIn(0, 255)
+            val dG = ((if (darkIsLo) loG[i] else hiG[i]) / darkCnt + 0.5).toInt().coerceIn(0, 255)
+            val dB = ((if (darkIsLo) loB[i] else hiB[i]) / darkCnt + 0.5).toInt().coerceIn(0, 255)
+            darkArgb[i] = (0xFF shl 24) or (dR shl 16) or (dG shl 8) or dB
+            darkShare[i] = darkCnt.toFloat() / total
+            darkL[i] = darkMeanL.toFloat()
+
             if (lightMeanL - darkMeanL >= EDGE_DARK_KEEP_SEPARATION &&
                 darkCnt.toDouble() / total >= EDGE_DARK_KEEP_SHARE
             ) {
-                useHi = darkIsHi
+                useHi = hiMeanL < loMeanL
             }
             val c = if (useHi) hc else lc
             val rr = ((if (useHi) hiR[i] else loR[i]) / c + 0.5).toInt().coerceIn(0, 255)
@@ -322,7 +365,134 @@ object ImagePreprocessor {
             argb[i] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
             edgeMask[i] = true
         }
+
+        // 第三遍：细线桥接。
+        //
+        // 29×29 这类低网格上，一条 8px 宽的轮廓线只覆盖一格 10%~20%，
+        // 上面"深色占比 ≥ 22%"的判据会让它判成白，整条线断成虚线。
+        // 对"深色占比 ≥ [BRIDGE_MIN_SHARE]、深色侧确实是墨（L < [BRIDGE_INK_L]）"
+        // 的格子看 8 邻域：上下或左右两侧都已判成深色，就把这格补成墨色，
+        // 把线接起来。只补被墨色夹住的格，不会把浅色区域涂黑。
+        for (y in 0 until gridH) {
+            for (x in 0 until gridW) {
+                val i = y * gridW + x
+                if (edgeMask[i]) continue
+                if (darkShare[i] < BRIDGE_MIN_SHARE || darkL[i] >= BRIDGE_INK_L) continue
+                val up = y > 0 && edgeMask[i - gridW]
+                val down = y < gridH - 1 && edgeMask[i + gridW]
+                val left = x > 0 && edgeMask[i - 1]
+                val right = x < gridW - 1 && edgeMask[i + 1]
+                if (!(up && down) && !(left && right)) continue
+                argb[i] = darkArgb[i]
+                edgeMask[i] = true
+            }
+        }
     }
+
+    /**
+     * 墨线优先：格内同时有"墨"和"纸"时，格子取墨色。
+     *
+     * 判据只认两类像素：亮度 < [INK_DARK_L] 的墨、亮度 ≥ [PAPER_L] 的纸白。
+     * 两者都达到比例才动手，等于要求"这是一条画在白纸上的线"，照片里
+     * 的深色块和半调阴影不会命中（它们旁边没有成片的纸白）。
+     * 墨占比上限挡住"整格都是墨"的情况，避免重复计算。
+     *
+     * 复杂度 O(源像素 + 格数)，只加一次遍历。
+     */
+    private fun inkLineCells(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        gridW: Int,
+        gridH: Int,
+        argb: IntArray,
+        edgeMask: BooleanArray,
+    ) {
+        val n = gridW * gridH
+        val inkCnt = IntArray(n)
+        val paperCnt = IntArray(n)
+        val sR = LongArray(n)
+        val sG = LongArray(n)
+        val sB = LongArray(n)
+        for (y in 0 until srcH) {
+            val rowBase = (y.toLong() * gridH / srcH).toInt() * gridW
+            val row = y * srcW
+            for (x in 0 until srcW) {
+                val p = pixels[row + x]
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                val l = 0.299 * r + 0.587 * g + 0.114 * b
+                val k = rowBase + (x.toLong() * gridW / srcW).toInt()
+                if (l < INK_DARK_L) {
+                    inkCnt[k]++
+                    sR[k] += r; sG[k] += g; sB[k] += b
+                } else if (l >= PAPER_L) {
+                    paperCnt[k]++
+                }
+            }
+        }
+        val inkShare = FloatArray(n)
+        for (i in 0 until n) {
+            val ic = inkCnt[i]
+            if (ic == 0) continue
+            val pc = paperCnt[i]
+            val total = ic + pc
+            if (total == 0) continue
+            val share = ic.toFloat() / total
+            inkShare[i] = share
+            if (pc.toFloat() / total < PAPER_MIN_SHARE) continue
+            // 整格以墨为主：直接取墨色（眼睛、实心黑块、粗描边）
+            if (share < INK_SOLID_SHARE) continue
+            val rr = (sR[i] / ic).toInt().coerceIn(0, 255)
+            val gg = (sG[i] / ic).toInt().coerceIn(0, 255)
+            val bb = (sB[i] / ic).toInt().coerceIn(0, 255)
+            argb[i] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+            edgeMask[i] = true
+        }
+
+        // 第二轮：细线桥接。线只擦到格子一小角时面积平均是浅灰，量化后
+        // 断成虚线。看四邻：上下或左右都已判成墨，就把这格补成墨色。
+        // 迭代两遍，让 45° 斜线也能沿对角线接上。
+        val ink = BooleanArray(n) { i -> inkShare[i] >= INK_SOLID_SHARE || edgeMask[i] }
+        repeat(2) {
+            for (y in 0 until gridH) {
+                for (x in 0 until gridW) {
+                    val i = y * gridW + x
+                    if (ink[i]) continue
+                    if (inkShare[i] < INK_MIN_SHARE) continue
+                    if (paperCnt[i].toFloat() / (inkCnt[i] + paperCnt[i]).coerceAtLeast(1) < PAPER_MIN_SHARE) continue
+                    val up = y > 0 && ink[i - gridW]
+                    val down = y < gridH - 1 && ink[i + gridW]
+                    val left = x > 0 && ink[i - 1]
+                    val right = x < gridW - 1 && ink[i + 1]
+                    if (!(up && down) && !(left && right)) continue
+                    val ic = inkCnt[i]
+                    val rr = (sR[i] / ic).toInt().coerceIn(0, 255)
+                    val gg = (sG[i] / ic).toInt().coerceIn(0, 255)
+                    val bb = (sB[i] / ic).toInt().coerceIn(0, 255)
+                    argb[i] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+                    edgeMask[i] = true
+                    ink[i] = true
+                }
+            }
+        }
+    }
+
+    /** 墨线优先：被视为"墨"的亮度上限 */
+    private const val INK_DARK_L = 110.0
+
+    /** 墨线优先：被视为"纸白"的亮度下限 */
+    private const val PAPER_L = 205.0
+
+    /** 墨线优先：墨占（墨+纸）的最低比例 */
+    private const val INK_MIN_SHARE = 0.12f
+
+    /** 墨线优先：整格取墨的墨占比下限 */
+    private const val INK_SOLID_SHARE = 0.15f
+
+    /** 墨线优先：纸白占比下限（挡住"深色块旁边只有一点点白"的假边界） */
+    private const val PAPER_MIN_SHARE = 0.25f
 
     /**
      * 像素画采样：还原画像素 → 目标格按覆盖面积取"多数色"。

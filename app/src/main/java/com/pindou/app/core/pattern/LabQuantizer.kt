@@ -70,6 +70,12 @@ object LabQuantizer {
         // 也不影响主体（主体簇的 L/彩度不在近白区间）。
         val whiteIdx = neutralWhiteIndex(sample, width, height, palette, excludedCodes)
 
+        // 近黑归一：抗锯齿会把纯黑描边稀释成 #2F2B2F 这类"深灰黑"，而色卡里
+        // 往往同时存在 #000000 和 #2F2B2F 两个近中性深色，逐格取最近色会在
+        // 同一条描边上跳色——线条一段纯黑、一段灰，眼睛和轮廓看着脏。
+        // 中性且极暗（L ≤ 22、彩度 ≤ 6.3）的格子统一归到色卡最深的那个中性色。
+        val inkIdx = neutralInkIndex(palette, excludedCodes)
+
         // 每簇映射一次色卡。不能只取"离簇心最近的那个色号"：一个簇里
         // 混进少量邻近色（脸部混入深红花瓣）时，簇心会被拉偏，最近色跟着
         // 跳到更艳的色号，整块脸就偏色。做法是给每簇挑 [SHORTLIST] 个
@@ -135,7 +141,10 @@ object LabQuantizer {
             // 只有接近纯白的才吸，灰色整片进色卡映射，形状才留得住。
             val pureWhite = l >= 96f && chroma2 <= 36f
             val bgWhite = bgDistance[i] > BG_RADIUS && l >= WHITE_FLOOR && chroma2 <= 256f
-            cells[i] = if (whiteIdx >= 0 && (pureWhite || bgWhite)) {
+            val pureInk = inkIdx >= 0 && l <= INK_FLOOR && chroma2 <= INK_CHROMA2
+            cells[i] = if (pureInk) {
+                inkIdx
+            } else if (whiteIdx >= 0 && (pureWhite || bgWhite)) {
                 whiteIdx
             } else {
                 clusterPalette[labels[i]]
@@ -150,9 +159,20 @@ object LabQuantizer {
                 val argb = sample.argb[i]
                 cells[i] = cache.getOrPut(argb) {
                     val l = floatArrayOf(lab[i * 3], lab[i * 3 + 1], lab[i * 3 + 2])
-                    var idx = palette.nearestIndex(l, excludedCodes)
-                    if (idx < 0) idx = palette.nearestIndex(l)
-                    idx
+                    // 细节格（描边、眼睛、高光）走原始色直接映射，绕过了上面的
+                    // 近白归一。#F0F0F0 这种"抗锯齿过的白"离 #EDEDED 比离 #FFFFFF
+                    // 还近 0.5 个 ΔE，会整圈描边镶上一圈浅灰豆——肉眼看就是脏边。
+                    // 所以这里补一条：中性且足够亮的，直接归白。
+                    val chroma2 = l[1] * l[1] + l[2] * l[2]
+                    if (inkIdx >= 0 && l[0] <= INK_FLOOR && chroma2 <= INK_CHROMA2) {
+                        inkIdx
+                    } else if (whiteIdx >= 0 && l[0] >= 92.5f && chroma2 <= 30f) {
+                        whiteIdx
+                    } else {
+                        var idx = palette.nearestIndex(l, excludedCodes)
+                        if (idx < 0) idx = palette.nearestIndex(l)
+                        idx
+                    }
                 }
             }
         }
@@ -164,6 +184,12 @@ object LabQuantizer {
 
     /** 浅色归一的白度下限（Lab L）：低于此值的灰要按色卡灰保留 */
     private const val WHITE_FLOOR = 94f
+
+    /** 近黑归一的亮度上限（Lab L）：低于它的中性格视作描边墨色 */
+    private const val INK_FLOOR = 22f
+
+    /** 近黑归一的彩度平方上限（6.3²）：超过它说明是有色深色，不能当墨色 */
+    private const val INK_CHROMA2 = 40f
 
     /** 每簇参与投票的候选色号数：8 个足够覆盖簇内混色的分裂，再多只是浪费 */
     private const val SHORTLIST = 8
@@ -292,6 +318,29 @@ object LabQuantizer {
                 best = i
                 bestChroma = chroma
                 bestL = e.lab[0]
+            }
+        }
+        return best
+    }
+
+    /**
+     * 取色卡里最深的那个中性色（墨色）。
+     *
+     * 只有中性（彩度 ≤ 12）且够暗（L ≤ 30）才参与，避免把深蓝、深棕当成墨。
+     * 多套色卡里同时有 #000000 与 #2F2B2F，这里取 L 最小的那个，让描边统一。
+     * 找不到返回 -1（纯彩色色卡），调用方跳过归一。
+     */
+    private fun neutralInkIndex(palette: BeadPalette, excludedCodes: Set<String>): Int {
+        var best = -1
+        var bestL = Float.MAX_VALUE
+        for (i in palette.colors.indices) {
+            val e = palette.colors[i]
+            if (e.code in excludedCodes) continue
+            val chroma2 = e.lab[1] * e.lab[1] + e.lab[2] * e.lab[2]
+            if (chroma2 > 144f || e.lab[0] > 30f) continue
+            if (e.lab[0] < bestL) {
+                bestL = e.lab[0]
+                best = i
             }
         }
         return best

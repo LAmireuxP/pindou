@@ -53,7 +53,7 @@ fun SettingsScreen(vm: AppViewModel) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 Text("默认网格尺寸", style = MaterialTheme.typography.titleLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    listOf(29 to 29, 15 to 15, 58 to 58).forEach { (w, h) ->
+                    listOf(29 to 29, 48 to 48, 58 to 58, 78 to 78).forEach { (w, h) ->
                         ShChip(
                             text = "${w}×${h}",
                             selected = settings.defaultGridW == w && settings.defaultGridH == h,
@@ -125,7 +125,7 @@ fun SettingsScreen(vm: AppViewModel) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 Text("关于", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "拼豆图纸 v0.5.0 · 纯离线生成，照片不上传",
+                    "豆格 v0.6.0 · 纯离线生成，照片不上传",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(

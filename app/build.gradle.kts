@@ -70,6 +70,12 @@ kotlin {
 // 中文项目路径下测试 worker 的 classpath 会出现编码问题，强制 UTF-8
 tasks.withType<Test>().configureEach {
     jvmArgs("-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8")
+    // 离线渲染夹具（HarnessTest）的参数走环境变量，Gradle 默认不会把它们
+    // 当作输入，换了测试图/网格仍会判 UP-TO-DATE 直接跳过。显式登记成输入。
+    inputs.property("harnessImg", System.getenv("HARNESS_RAW") ?: "")
+    inputs.property("harnessGrid", System.getenv("HARNESS_GRID") ?: "")
+    inputs.property("harnessLevel", System.getenv("HARNESS_LEVEL") ?: "")
+    inputs.property("harnessBg", System.getenv("HARNESS_BG") ?: "")
 }
 
 dependencies {
