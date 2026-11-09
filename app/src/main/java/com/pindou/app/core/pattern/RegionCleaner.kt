@@ -8,12 +8,12 @@ import com.pindou.app.core.color.ColorConversions
  *
  * 与 [IsolatedPixelCleaner] 的分工：后者只处理"全图出现 ≤3 次"的孤立单格；
  * 本模块按连通域面积处理 2~N 格的碎块——这是照片转图纸噪感的主要来源。
- * 在色号域（色卡索引）上运行，放在相似色号合并之后，可吃到合并产生的级联效果。
+ * 在色号域（色卡索引）上运行，放在众数滤波之后。
  *
  * 算法：4 连通标记所有区域 → 面积 < [minArea] 的区域找"邻接面积最大的色块"
  * 整块并入（平局取 ΔE 最近者）。与邻域色差 ≥ [keepDeltaE] 的小区域是
  * 真细节（眼睛、高光），保留不并。锁定格所在区域不动。
- * 复杂度 O(格数)，单轮不级联。
+ * 复杂度 O(格数 + 区域邻接数)，区域像素列表只保留一次，合并不再全图扫描。
  */
 object RegionCleaner {
 
@@ -26,19 +26,39 @@ object RegionCleaner {
         locked: Set<Int> = emptySet(),
         keepDeltaE: Double = 14.0,
     ): IntArray {
+        if (locked.isEmpty()) {
+            return cleanMasked(cells, width, height, minArea, paletteArgbs, null, keepDeltaE)
+        }
+        val mask = BooleanArray(cells.size)
+        for (i in locked) if (i in mask.indices) mask[i] = true
+        return cleanMasked(cells, width, height, minArea, paletteArgbs, mask, keepDeltaE)
+    }
+
+    /** 细节掩码版本：锁定格用位图传入，几十万格也不必装箱成 Set。 */
+    fun cleanMasked(
+        cells: IntArray,
+        width: Int,
+        height: Int,
+        minArea: Int,
+        paletteArgbs: List<Int>,
+        lockedMask: BooleanArray?,
+        keepDeltaE: Double = 14.0,
+    ): IntArray {
         if (width < 2 || height < 2 || minArea <= 1) return cells
         val n = cells.size
         val labels = IntArray(n) { -1 } // -1 = 未标记
         val regions = ArrayList<Region>()
+        val regionPixels = ArrayList<IntArray>()
 
-        // 4 连通 flood fill 标记（栈式，避免递归爆栈）
+        // 4 连通 flood fill 标记（栈式，避免递归爆栈）；每个区域的像素下标
+        // 只在标记时写一次，合并阶段直接按列表改色。
         val stack = IntArray(n)
         for (start in 0 until n) {
             if (labels[start] != -1 || cells[start] < 0) continue
             val id = regions.size
             val color = cells[start]
             var size = 0
-            var hasLocked = start in locked
+            var hasLocked = lockedMask?.get(start) == true
             stack[size++] = start
             labels[start] = id
             var sp = 0
@@ -48,26 +68,26 @@ object RegionCleaner {
                 val y = cur / width
                 if (x > 0 && cells[cur - 1] == color && labels[cur - 1] == -1) {
                     labels[cur - 1] = id; stack[size++] = cur - 1
-                    if (cur - 1 in locked) hasLocked = true
+                    if (lockedMask?.get(cur - 1) == true) hasLocked = true
                 }
                 if (x < width - 1 && cells[cur + 1] == color && labels[cur + 1] == -1) {
                     labels[cur + 1] = id; stack[size++] = cur + 1
-                    if (cur + 1 in locked) hasLocked = true
+                    if (lockedMask?.get(cur + 1) == true) hasLocked = true
                 }
                 if (y > 0 && cells[cur - width] == color && labels[cur - width] == -1) {
                     labels[cur - width] = id; stack[size++] = cur - width
-                    if (cur - width in locked) hasLocked = true
+                    if (lockedMask?.get(cur - width) == true) hasLocked = true
                 }
                 if (y < height - 1 && cells[cur + width] == color && labels[cur + width] == -1) {
                     labels[cur + width] = id; stack[size++] = cur + width
-                    if (cur + width in locked) hasLocked = true
+                    if (lockedMask?.get(cur + width) == true) hasLocked = true
                 }
             }
             regions.add(Region(color, size, hasLocked))
+            regionPixels.add(stack.copyOf(size))
         }
         if (regions.size <= 1) return cells
 
-        // 每个区域的邻接区域计数（面积大者优先合并，平局再比色差）
         val adjacency = Array(regions.size) { HashMap<Int, Int>() }
         for (y in 0 until height) {
             for (x in 0 until width - 1) {
@@ -101,7 +121,6 @@ object RegionCleaner {
             val region = regions[id]
             if (region.size >= minArea || region.hasLocked || region.color < 0) continue
             if (adjacency[id].isEmpty()) continue // 包围全空格（无邻接色块）：不动
-            // 邻接候选：面积最大者优先，平局取 ΔE 最近
             var bestLabel = -1
             var bestArea = -1
             var bestDe = Double.MAX_VALUE
@@ -124,9 +143,8 @@ object RegionCleaner {
             if (bestLabel < 0) continue
             // 色差保护：与最大邻块本质不同 → 真细节，保留
             if (bestDe >= keepDeltaE) continue
-            for (i in 0 until n) {
-                if (labels[i] == id) out[i] = regions[bestLabel].color
-            }
+            val targetColor = regions[bestLabel].color
+            for (p in regionPixels[id]) out[p] = targetColor
             merged = true
         }
         return if (merged) out else cells

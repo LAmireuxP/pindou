@@ -1,26 +1,24 @@
 package com.pindou.app.core.pattern
 
-import com.pindou.app.core.color.ColorConversions
 import com.pindou.app.core.palette.BeadPalette
-
+import kotlin.math.roundToInt
 
 /** 生成参数（功能规格书 §4） */
 data class GeneratorOptions(
     val gridW: Int,
     val gridH: Int,
-    val maxColors: Int? = null,          // null = 不限制（用自适应 K）
+    val maxColors: Int? = null,          // null = 不限制（色卡全色）
     val excludedCodes: Set<String> = emptySet(),
     val cleanupEnabled: Boolean = true,  // 孤立像素清理，默认开
     val ditheringEnabled: Boolean = false, // 抖动，默认关
     val removeBackground: Boolean = false, // 背景移除，默认关
     val backgroundTolerance: Double = 12.0, // 背景 ΔE 容差
     val similarCodeMaxDeltaE: Double = 3.0, // 相似色号合并阈值；0 = 关闭
-    val saliencyDeltaE: Double = 15.0,  // 显著细节与主导色的最小 ΔE；0 = 关闭检测
-    val saliencyFraction: Double = 0.15, // 显著细节色块的最小像素占比
-    val contentMode: ContentSimplifier.Mode = ContentSimplifier.Mode.OFF, // 内容简化（前置）
+    val filterLevel: FilterLevel = FilterLevel.MEDIUM, // 过滤等级（对齐颂拼豆四档）
+    val detailThreshold: Double? = null, // 细节保护阈值（Lab ΔE）；null = 跟随过滤等级
     val autoExposure: Boolean = true,    // 欠曝照片自动提亮（中位亮度 < 70 才触发）
     val regionCleanupEnabled: Boolean = true, // 区域清理：小面积连通碎块并入邻域
-    val regionMinArea: Int? = null,           // null = 按格数自适应
+    val regionMinArea: Int? = null,           // null = 按过滤等级/格数自适应
 )
 
 /** 生成结果：cells 为色卡索引（-1 = 空格），与 palette 配套使用 */
@@ -46,7 +44,15 @@ data class PatternResult(
 enum class GenerationStage { EXPOSURE, DOWNSAMPLE, BACKGROUND, REDUCE, MAP, CLEAN, MERGE, LIMIT, DONE }
 
 /**
- * 图纸生成管线：主导色降采样 → (K-means 压色) → 色卡映射 → (抖动) → (杂色清理) → (相似色号合并)。
+ * 图纸生成管线（对齐颂拼豆「导入前处理」的思路）：
+ *
+ * 曝光修正 → 面积加权重采样到 2× 网格 → 按过滤等级盒式平滑 → 落到目标网格
+ * → Lab 聚类量化 → 细节回填 → 邻域众数滤波 → 小区域合并 → 相似色号合并 → 限色。
+ *
+ * 关键差别：不再逐格映射色卡。逐格最近色会把同一片区域拆成十几个相邻
+ * 色号，纹理被放大成棋盘格；先 k-means 把整图归成 K 个色簇、逐簇映射，
+ * 同一片区域的所有格子带同一个色号，块面自然连成一片。细节掩码再把
+ * 眼睛、高光、首饰按原始采样色回填，避免聚类把五官平均掉。
  * 纯 Kotlin 实现，可在任意线程执行。
  */
 object PatternGenerator {
@@ -66,68 +72,76 @@ object PatternGenerator {
             ExposureCorrector.correct(pixels, srcW, srcH)
         } else pixels
         onStage(GenerationStage.EXPOSURE, 1f)
-        // ⓪ 内容简化（前置）：保边去细节，让降采样面对的是已扁平化的图
-        val workPixels = if (options.contentMode != ContentSimplifier.Mode.OFF) {
-            // 简化力度与目标网格联动：块 ≈ 源图/网格，先得到"简化过的图"再逐格转
-            ContentSimplifier.simplifyForGrid(
-                exposurePixels, srcW, srcH, options.contentMode, options.gridW, options.gridH,
-            )
-        } else exposurePixels
-        // ① 主导色降采样 + 显著细节检测（眼睛、高光等小面积高对比色块优先保留）
+
+        // ① 采样：面积平均 + 分级平滑，直接得到目标网格的颜色。
+        //    过滤等级越高，2× 中间图上的盒式平滑越强，纹理高频先被吃掉。
         onStage(GenerationStage.DOWNSAMPLE, 0f)
-        val down = DominantColorDownsampler.downsampleDetailed(
-            workPixels, srcW, srcH, options.gridW, options.gridH,
-            options.saliencyDeltaE, options.saliencyFraction,
+        val sample = ImagePreprocessor.sample(
+            exposurePixels, srcW, srcH, options.gridW, options.gridH, options.filterLevel,
         )
-        var grid = down.colors
-        val salientColors = HashSet<Int>()
-        for (i in down.colors.indices) if (down.salient[i]) salientColors.add(down.colors[i])
         onStage(GenerationStage.DOWNSAMPLE, 1f)
 
-        // ② 颜色量化（始终执行）：先把格子颜色聚成稳定的中间表示（类中心代替），
-        //    再统一映射色号 —— 同一聚类的格子必然同号，小尺寸下采样块内颜色杂
-        //    导致的跳号噪点从结构上消除。用户限色时用指定 K，否则自适应。
-        onStage(GenerationStage.REDUCE, 0f)
-        val targetK = options.maxColors
-            ?: KmeansColorReducer.adaptiveClusterCount(options.gridW * options.gridH)
-        grid = KmeansColorReducer.reduce(grid, targetK, salientColors) {
-            onStage(GenerationStage.REDUCE, it)
-        }
-        onStage(GenerationStage.REDUCE, 1f)
+        // ② 细节掩码：与邻域均值色差大的格子（眼睛、嘴、高光）锁定。
+        //    必须在量化前算好，量化阶段用它回填原始采样色。
+        val detailThreshold = options.detailThreshold ?: options.filterLevel.detailThreshold
+        val detail = ImagePreprocessor.detailMask(
+            sample, options.gridW, options.gridH, threshold = detailThreshold,
+        )
 
-        // ③+④ 色卡映射（抖动开启时由抖动器一并完成映射）
+        // ③ 色卡映射：抖动走逐格误差扩散；默认走 Lab 聚类量化。
+        //    量化先把整图归成 K 个色簇，同一片区域共享一个色号，这是
+        //    "成块"的来源；抖动与聚类互斥，开了抖动就保留逐格语义。
         val mapped: IntArray
         if (options.ditheringEnabled) {
             onStage(GenerationStage.MAP, 0f)
             mapped = FloydSteinbergDitherer.dither(
-                grid, options.gridW, options.gridH,
+                sample.argb, options.gridW, options.gridH,
                 FloydSteinbergDitherer.FromPalette(palette),
             )
             onStage(GenerationStage.MAP, 1f)
         } else {
-            mapped = mapToPalette(grid, options, palette) { onStage(GenerationStage.MAP, it) }
+            onStage(GenerationStage.MAP, 0f)
+            mapped = LabQuantizer.quantize(
+                sample, options.gridW, options.gridH, palette,
+                options.filterLevel.clusterK, options.excludedCodes, detail,
+            )
+            onStage(GenerationStage.MAP, 1f)
         }
 
-        // ③b 背景移除（可选）：从四边洪水填充，与边缘连通的近似色清成空格
+        // ②b 背景移除（可选）：从四边洪水填充，与边缘连通的近似色清成空格
         val cells: IntArray = if (options.removeBackground) {
-            BackgroundRemover.applyToCells(
-                mapped, grid, options.gridW, options.gridH,
+            onStage(GenerationStage.BACKGROUND, 0f)
+            val removed = BackgroundRemover.applyToCells(
+                mapped, sample.argb, options.gridW, options.gridH,
                 options.backgroundTolerance,
             )
+            onStage(GenerationStage.BACKGROUND, 1f)
+            removed
         } else {
             mapped
         }
 
-        // ⑤ 杂色清理（带色差保护：真细节不被误清）
-        var cleaned = cells
-        if (options.cleanupEnabled) {
-            onStage(GenerationStage.CLEAN, 0f)
-            cleaned = IsolatedPixelCleaner.clean(
-                cells, options.gridW, options.gridH,
-                paletteArgbs = palette.colors.map { it.argb },
+        // ④ 邻域众数滤波：过滤等级的档位核心。无过滤 0 轮，低/中 1 轮，高 2 轮。
+        onStage(GenerationStage.CLEAN, 0f)
+        var cleaned = ImagePreprocessor.modeFilter(
+            cells, options.gridW, options.gridH, palette.colors.size,
+            options.filterLevel.modePasses, detail,
+        )
+
+        // ⑤ 小区域合并：面积占比低于档位阈值的同色连通块并入最大邻块，
+        //    细节格所在区域整块保留。复杂度 O(格数)。
+        if (options.regionCleanupEnabled && options.filterLevel.regionFraction > 0.0) {
+            val autoMin = (options.gridW * options.gridH * options.filterLevel.regionFraction)
+                .roundToInt()
+                .coerceIn(3, 64)
+            val minArea = options.regionMinArea ?: autoMin
+            cleaned = RegionCleaner.cleanMasked(
+                cleaned, options.gridW, options.gridH, minArea,
+                palette.colors.map { it.argb }, detail,
+                options.filterLevel.regionKeepDeltaE,
             )
-            onStage(GenerationStage.CLEAN, 0.5f)
         }
+        onStage(GenerationStage.CLEAN, 0.6f)
 
         // ⑥ 相似色号合并：近同色号并入常用方，消除渐变区的跳号噪点
         if (options.similarCodeMaxDeltaE > 0.0) {
@@ -140,30 +154,22 @@ object PatternGenerator {
             onStage(GenerationStage.MERGE, 1f)
         }
 
-        // ⑥b 最终限色：映射后色号数会超过 K-means 的 K（各聚类中心落到不同色号），
-        // 用户限色时在此兜底压到 maxColors 以内
+        // ⑥b 孤立像素兜底：众数滤波后仍残留的、全图出现 ≤3 次的单格
+        if (options.cleanupEnabled) {
+            cleaned = IsolatedPixelCleaner.clean(
+                cleaned, options.gridW, options.gridH,
+                paletteArgbs = palette.colors.map { it.argb },
+            )
+        }
+
+        // ⑥c 最终限色：用户显式限色时把色号数压到 maxColors 以内
         if (options.maxColors != null) {
             onStage(GenerationStage.LIMIT, 0f)
             cleaned = ColorLimiter.limit(cleaned, palette.colors.map { it.argb }, options.maxColors)
             onStage(GenerationStage.LIMIT, 1f)
         }
-
-        // ⑥c 区域清理：照片纹理残留的小面积连通碎块整块并入邻接色块（噪感主要来源）。
-        // 放在合并/限色之后，吃到色号收敛的级联效果；跑两轮，第二轮清掉首轮合并产生的新碎块
-        if (options.regionCleanupEnabled) {
-            val minArea = options.regionMinArea ?: RegionCleaner.adaptiveMinArea(
-                options.gridW * options.gridH,
-            )
-            cleaned = RegionCleaner.clean(
-                cleaned, options.gridW, options.gridH, minArea,
-                palette.colors.map { it.argb },
-            )
-            cleaned = RegionCleaner.clean(
-                cleaned, options.gridW, options.gridH, minArea,
-                palette.colors.map { it.argb },
-            )
-        }
         onStage(GenerationStage.CLEAN, 1f)
+
         val result = PatternResult(
             options.gridW, options.gridH, cleaned, palette,
             (System.nanoTime() - startNanos) / 1_000_000,
@@ -172,31 +178,4 @@ object PatternGenerator {
         return result
     }
 
-    /** 网格 ARGB → 最近色卡索引 */
-    private fun mapToPalette(
-        grid: IntArray,
-        options: GeneratorOptions,
-        palette: BeadPalette,
-        onProgress: (Float) -> Unit,
-    ): IntArray {
-        val out = IntArray(grid.size)
-        val excluded = options.excludedCodes
-        val total = grid.size
-        // 按去重颜色缓存查询结果：K-means 量化后网格里只有 ≤64 种颜色，
-        // 避免对每格重复 291 次 CIEDE2000（200×200 网格曾达千万次量级）。
-        val cache = HashMap<Int, Int>()
-        var lastReported = -1
-        for (i in grid.indices) {
-            val argb = grid[i]
-            out[i] = cache.getOrPut(argb) {
-                palette.nearestIndex(ColorConversions.argbToLab(argb), excluded)
-            }
-            val pct = (i * 100L / total).toInt()
-            if (pct != lastReported) {
-                lastReported = pct
-                onProgress(pct / 100f)
-            }
-        }
-        return out
-    }
 }

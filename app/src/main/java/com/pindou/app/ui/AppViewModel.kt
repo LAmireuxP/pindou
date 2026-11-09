@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import java.io.File
 import java.io.FileOutputStream
 
@@ -125,8 +126,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var dithering by mutableStateOf(false)
     var removeBackground by mutableStateOf(false)
     var backgroundTolerance by mutableFloatStateOf(12f)
-    // 默认卡通化：先得到简化图再逐格转换，比 1:1 复刻照片的效果好得多
-    var contentMode by mutableStateOf(com.pindou.app.core.pattern.ContentSimplifier.Mode.CARTOON)
+    // 过滤等级：对齐颂拼豆「导入前处理」四档，默认中过滤
+    var filterLevel by mutableStateOf(com.pindou.app.core.pattern.FilterLevel.MEDIUM)
 
     var genState by mutableStateOf<GenState>(GenState.Idle)
         private set
@@ -367,6 +368,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         adaptiveScale = 1f
     }
 
+    /**
+     * 「原图尺寸」档位：宽度固定，高度按图片比例推导。
+     * 对齐颂拼豆的档位语义——只选一个数，长边不拉伸，避免方形网格把照片压扁。
+     */
+    fun setGridWidthPreset(width: Int) {
+        val w = width.coerceIn(5, 200)
+        val h = if (imageW > 0 && imageH > 0) {
+            (w.toDouble() * imageH / imageW).roundToInt().coerceIn(5, 200)
+        } else w
+        setGridSize(w, h)
+    }
+
     private fun recomputeAdaptive() {
         val (baseW, baseH) = ImageTransforms.adaptiveGridSize(imageW, imageH, adaptiveAnchor)
         val (w, h) = ImageTransforms.scaledGridSize(baseW, baseH, adaptiveScale.toDouble())
@@ -391,7 +404,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         ditheringEnabled = dithering,
                         removeBackground = removeBackground,
                         backgroundTolerance = backgroundTolerance.toDouble(),
-                        contentMode = contentMode,
+                        filterLevel = filterLevel,
                     ),
                     palette,
                 ) { stage, progress ->
@@ -549,7 +562,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         maxColors = if (limitColors) maxColors.coerceIn(1, 64) else null,
                         cleanupEnabled = true,
                         ditheringEnabled = false,
-                        contentMode = contentMode,
+                        filterLevel = filterLevel,
                     ),
                     palette,
                 ) { stage, progress ->

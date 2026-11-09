@@ -8,7 +8,7 @@ import java.util.zip.CRC32
 import java.util.zip.Deflater
 
 /**
- * 转换效果评测 harness（非断言测试）：真实照片 × 多组参数，
+ * 转换效果评测 harness（非断言测试）：真实照片 × 四档过滤等级，
  * 输出对比图到 D:/ChatGPT/conversion_eval，视觉评估用。
  * 输入为预先转好的裸 RGB 数据（python/PIL 生成，android.jar 无 ImageIO），
  * manifest.txt 每行 `name,width,height`；不存在时静默跳过（CI 不受影响）。
@@ -43,56 +43,71 @@ class ConversionEvalHarness {
                     (bytes[3 * i + 2].toInt() and 0xFF)
             }
 
-            val grid = 40
-            val configs = listOf(
-                "A_旧1比1" to GeneratorOptions(
-                    gridW = grid, gridH = grid,
-                    contentMode = ContentSimplifier.Mode.OFF,
-                    regionCleanupEnabled = false,
-                    autoExposure = false,
-                ),
-                "B_新默认卡通化" to GeneratorOptions(
-                    gridW = grid, gridH = grid,
-                    contentMode = ContentSimplifier.Mode.CARTOON,
-                    regionCleanupEnabled = true,
-                ),
-                "C_卡通化限24色" to GeneratorOptions(
-                    gridW = grid, gridH = grid,
-                    contentMode = ContentSimplifier.Mode.CARTOON,
-                    regionCleanupEnabled = true,
-                    maxColors = 24,
-                ),
-            )
+            // 与颂拼豆同为"宽度档位、高度按比例"：78 宽对应原图高宽比
+            val gridW = 78
+            val gridH = (gridW.toDouble() * h / w).toInt().coerceIn(5, 200)
+            val configs = FilterLevel.entries.map { lvl ->
+                lvl.label to GeneratorOptions(
+                    gridW = gridW, gridH = gridH,
+                    filterLevel = lvl,
+                    autoExposure = true,
+                )
+            }
             val cells = mutableListOf<Pair<String, IntArray>>()
             for ((cname, options) in configs) {
                 val r = PatternGenerator.generate(pixels, w, h, options, palette)
                 cells.add(cname to r.cells)
                 val colorCount = r.cells.filter { it >= 0 }.distinct().size
-                stats.appendLine("$name $cname 用色 $colorCount 色号, ${r.cells.count { it >= 0 }} 格, ${r.elapsedMs}ms")
+                stats.appendLine(
+                    "$name $cname 用色 $colorCount 色号, ${r.cells.count { it >= 0 }} 格, " +
+                        "杂点率 ${"%.2f".format(speckleRate(r.cells, gridW, gridH) * 100)}%, ${r.elapsedMs}ms",
+                )
             }
 
-            // 对比行：原图缩略 | A | B | C，统一高度，面板顺序与 stats 一致
-            val cellPx = 12
-            val panelH = grid * cellPx
+            // 对比行：原图缩略 | 无 | 低 | 中 | 高，统一高度
+            val cellPx = 8
+            val panelH = gridH * cellPx
             val gap = 16
-            val thumbW = panelH * w / h
-            val sheetW = thumbW + gap + (cellPx * grid + gap) * cells.size
+            val thumbW = (panelH.toDouble() * w / h).toInt()
+            val sheetW = thumbW + gap + (gridW * cellPx + gap) * cells.size
             val sheetH = panelH + gap
             val sheet = IntArray(sheetW * sheetH) { 0xFFFFFF }
             drawScaled(sheet, sheetW, pixels, w, h, 0, 0, thumbW, panelH)
             var x = thumbW + gap
             for ((_, c) in cells) {
-                for (gy in 0 until grid) for (gx in 0 until grid) {
-                    val idx = c[gy * grid + gx]
-                    val color = if (idx >= 0) palette.colors[idx].argb else 0xFFF6F6
+                for (gy in 0 until gridH) for (gx in 0 until gridW) {
+                    val idx = c[gy * gridW + gx]
+                    val color = if (idx >= 0) palette.colors[idx].argb else 0xFFF6F6F6.toInt()
                     fillRect(sheet, sheetW, x + gx * cellPx, gy * cellPx, cellPx, cellPx, color)
                 }
-                x += cellPx * grid + gap
+                x += gridW * cellPx + gap
             }
             writePng(File(outDir, "${name}_sheet.png"), sheet, sheetW, sheetH)
         }
         File(outDir, "stats.txt").writeText(stats.toString())
         println(stats)
+    }
+
+    /** 杂点率：与 8 邻域众数不同的格子占比，越低越"干净" */
+    private fun speckleRate(cells: IntArray, w: Int, h: Int): Double {
+        if (w < 3 || h < 3) return 0.0
+        var diff = 0
+        var total = 0
+        for (y in 1 until h - 1) {
+            for (x in 1 until w - 1) {
+                val cur = cells[y * w + x]
+                val freq = HashMap<Int, Int>()
+                for (dy in -1..1) for (dx in -1..1) {
+                    if (dx == 0 && dy == 0) continue
+                    val c = cells[(y + dy) * w + (x + dx)]
+                    if (c >= 0) freq.merge(c, 1, Int::plus)
+                }
+                val mode = freq.maxByOrNull { it.value }?.key ?: continue
+                if (cur != mode) diff++
+                total++
+            }
+        }
+        return if (total == 0) 0.0 else diff.toDouble() / total
     }
 
     /** 最近邻缩放绘制到画布（评测够用，无需插值） */

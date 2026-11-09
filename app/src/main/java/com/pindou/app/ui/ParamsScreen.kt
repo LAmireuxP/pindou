@@ -45,14 +45,15 @@ import com.pindou.app.ui.shadcn.ShPageHeader
 import com.pindou.app.ui.shadcn.TextButton
 import com.pindou.app.ui.theme.Spacing
 
-private val GridPresets = listOf("29×29", "15×15", "58×58", "自适应", "自定义")
+// 与颂拼豆「原图尺寸」对齐：只选宽度，高度按图片比例推导
+private val GridPresets = listOf("36", "52", "78", "104", "156", "200", "自适应", "自定义")
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ParamsScreen(vm: AppViewModel) {
     val bitmap = vm.imagePreview
     val palette = vm.selectedPalette
-    var preset by remember { mutableStateOf(if (vm.gridW == vm.gridH && vm.gridW in 15..58) "${vm.gridW}×${vm.gridH}" else "自定义") }
+    var preset by remember { mutableStateOf(if (vm.gridW.toString() in GridPresets) vm.gridW.toString() else "自定义") }
     var paletteMenuOpen by remember { mutableStateOf(false) }
     var showTextEditor by remember { mutableStateOf(false) }
     val beadSizeTag = palette?.beadSize?.name ?: "MM5"
@@ -158,9 +159,12 @@ fun ParamsScreen(vm: AppViewModel) {
                             onClick = {
                                 preset = p
                                 when (p) {
-                                    "29×29" -> vm.setGridSize(29, 29)
-                                    "15×15" -> vm.setGridSize(15, 15)
-                                    "58×58" -> vm.setGridSize(58, 58)
+                                    "36" -> vm.setGridWidthPreset(36)
+                                    "52" -> vm.setGridWidthPreset(52)
+                                    "78" -> vm.setGridWidthPreset(78)
+                                    "104" -> vm.setGridWidthPreset(104)
+                                    "156" -> vm.setGridWidthPreset(156)
+                                    "200" -> vm.setGridWidthPreset(200)
                                     "自适应" -> vm.applyAdaptiveSize()
                                 }
                             },
@@ -284,12 +288,12 @@ fun ParamsScreen(vm: AppViewModel) {
             }
         }
 
-        // 内容简化 + 进阶选项
+        // 过滤等级 + 进阶选项
         ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                Text("内容简化", style = MaterialTheme.typography.titleLarge)
+                Text("过滤等级", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "先把照片简化成干净色块再转色号。简化的粗细自动跟随网格大小",
+                    "等级越高杂色越少。降噪只作用于格子，眼睛、嘴、高光等高对比细节会锁定保留",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -297,18 +301,20 @@ fun ParamsScreen(vm: AppViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 ) {
-                    listOf(
-                        com.pindou.app.core.pattern.ContentSimplifier.Mode.OFF to "原图",
-                        com.pindou.app.core.pattern.ContentSimplifier.Mode.CARTOON to "卡通化",
-                        com.pindou.app.core.pattern.ContentSimplifier.Mode.EDGE to "边缘增强",
-                    ).forEach { (mode, label) ->
+                    com.pindou.app.core.pattern.FilterLevel.entries.forEach { level ->
                         ShChip(
-                            text = label,
-                            selected = vm.contentMode == mode,
-                            onClick = { vm.contentMode = mode },
+                            text = level.label,
+                            selected = vm.filterLevel == level,
+                            onClick = { vm.filterLevel = level },
                         )
                     }
                 }
+                Text(
+                    "进阶选项",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.xs),
+                )
                 SwitchRow(
                     title = "限制最大颜色数",
                     subtitle = null,

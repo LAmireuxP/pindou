@@ -101,9 +101,9 @@ class PatternGeneratorTest {
     }
 
     @Test
-    fun `先聚类后映射使色号数被自适应 K 封顶`() {
-        // 灰阶渐变源图（每格颜色都不同）+ 20 个近似等距的灰阶色卡：
-        // 16×16 网格的自适应 K = 19 → 最终用色数必须 ≤ 19（旧管线会用到全部 20 色）
+    fun `横向渐变输出稳定且可复现`() {
+        // 灰阶渐变 + 20 个近似等距灰阶色卡：采样用面积平均，
+        // 相邻格子只会在色号边界处跳变，同一输入两次结果必须一致。
         val palette = PaletteJson.parse(
             buildString {
                 append("""{"brand":"G","brandLabel":"灰阶","beadSize":"5mm","version":1,"colors":[""")
@@ -127,9 +127,20 @@ class PatternGeneratorTest {
             palette,
         )
         val distinctCodes = result.cells.distinct().size
-        val expectedCap = KmeansColorReducer.adaptiveClusterCount(16 * 16)
-        assertTrue("用色 $distinctCodes 超过自适应 K $expectedCap", distinctCodes <= expectedCap)
+        assertTrue("用色 $distinctCodes 超过色卡色数", distinctCodes <= 20)
         assertTrue("用色 $distinctCodes 少得反常", distinctCodes >= 5)
+        // 横向渐变：色号应单调推进，来回翻转（方向反复）只能是个别边界
+        for (y in 0 until 16) {
+            var prevDir = 0
+            var reversals = 0
+            for (x in 2 until 16) {
+                val d = result.cells[y * 16 + x] - result.cells[y * 16 + x - 1]
+                val dir = if (d > 0) 1 else if (d < 0) -1 else 0
+                if (dir != 0 && prevDir != 0 && dir != prevDir) reversals++
+                if (dir != 0) prevDir = dir
+            }
+            assertTrue("第 $y 行方向反转 $reversals 次，噪点过多", reversals <= 2)
+        }
         // 确定性：同一输入两次生成结果完全一致
         val again = PatternGenerator.generate(
             pixels, srcW, srcH,
@@ -141,14 +152,14 @@ class PatternGeneratorTest {
 
     @Test
     fun `小面积高对比细节穿透管线保留`() {
-        // 200×200 皮肤底 + 中央 8×8 眼睛（占一个 20×20 采样块的 16% ≥ 15%）
-        // → 降采样翻转 + 聚类救援 + 清理保护，最终图纸必须含有眼睛色号
+        // 200×200 皮肤底 + 中央 10×10 眼睛：20×20 网格时恰好占满一格，
+        // 细节掩码会锁定它，众数滤波和小区域合并都不得抹掉。
         val w = 200; val h = 200
         val skin = argb(235, 195, 175)
         val eye = argb(15, 35, 95)
         val pixels = IntArray(w * h) { skin }
-        // 眼睛完整落在一个 20×20 采样块内（x 100-119, y 100-119），8×8=16% ≥ 15%
-        for (y in 106 until 114) for (x in 106 until 114) pixels[y * w + x] = eye
+        // 眼睛完整落在 (100..109, 100..109) 这一个 10×10 采样格内
+        for (y in 100 until 110) for (x in 100 until 110) pixels[y * w + x] = eye
         val palette = PaletteJson.parse(
             """
             {"brand":"F","brandLabel":"脸","beadSize":"5mm","version":1,"colors":[
@@ -160,7 +171,7 @@ class PatternGeneratorTest {
         )
         val result = PatternGenerator.generate(
             pixels, w, h,
-            GeneratorOptions(gridW = 10, gridH = 10),
+            GeneratorOptions(gridW = 20, gridH = 20),
             palette,
         )
         val eyeIdx = palette.indexOfCode("E")
