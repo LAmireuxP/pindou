@@ -78,7 +78,12 @@ fun ChartCalibrateScreen(vm: AppViewModel) {
 
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
-    Column(Modifier.fillMaxSize()) {
+    // 整页可滚：控件卡不设 maxHeight，避免「空白阈值」被卡片边缘切一半
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+    ) {
         // ---- 顶栏 ----
         Row(
             modifier = Modifier
@@ -117,14 +122,16 @@ fun ChartCalibrateScreen(vm: AppViewModel) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .height(360.dp)
                 .padding(horizontal = Spacing.md)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF17171A))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
                 .onSizeChanged { canvasSize = it }
-                .pointerInput(grid, canvasSize, imgW, imgH) {
-                    if (grid == null || canvasSize.width == 0) return@pointerInput
+                // key 不能带 grid：拖动会改 grid，key 一变手势协程就被重启，
+                // 一整段拖动只生效第一帧，表现为"拖不动"。只按画布尺寸重建。
+                .pointerInput(canvasSize, imgW, imgH) {
+                    if (vm.chartGrid == null || canvasSize.width == 0) return@pointerInput
                     val fit = min(
                         canvasSize.width.toFloat() / imgW,
                         canvasSize.height.toFloat() / imgH,
@@ -158,12 +165,10 @@ fun ChartCalibrateScreen(vm: AppViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = Spacing.md)
-                .padding(bottom = Spacing.md)
-                .heightIn(max = 340.dp),
+                .padding(bottom = Spacing.md),
         ) {
             Column(
                 modifier = Modifier
-                    .verticalScroll(rememberScrollState())
                     .padding(Spacing.md),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
