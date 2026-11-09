@@ -150,6 +150,61 @@ class EditorEngine(
         return session.changes.isNotEmpty()
     }
 
+    /**
+     * 把当前页所有 [target] 色格替换成 [replacement]（锁定格跳过）。
+     * 整次替换作为一条撤销记录；用于长按「同色替换」。
+     */
+    fun replaceColorOnPage(target: Int, replacement: Int): Boolean {
+        if (target == replacement) return false
+        val session = startStroke()
+        val page = cells
+        val lock = locked
+        for (i in page.indices) {
+            if (page[i] == target && !lock[i]) {
+                // 直接写数组后仍用 session 收集旧值，保证一次手势只入一条历史
+                session.changes.putIfAbsent(i, Change(i, page[i], replacement))
+                page[i] = replacement
+            }
+        }
+        endStroke(session)
+        return session.changes.isNotEmpty()
+    }
+
+    /**
+     * 与 [index] 4 连通且同色的格子数（只读，不产生撤销记录）。
+     * 长按弹层用它提示「整块换色」会影响多少格，O(w*h)。
+     */
+    fun connectedRegionSize(index: Int): Int {
+        if (index !in cells.indices) return 0
+        val origin = cells[index]
+        val visited = BooleanArray(width * height)
+        val queue = ArrayDeque<Int>()
+        queue.add(index)
+        visited[index] = true
+        val w = width
+        val h = height
+        var count = 0
+        while (queue.isNotEmpty()) {
+            val cur = queue.removeFirst()
+            count++
+            val x = cur % w
+            val y = cur / w
+            if (x > 0 && !visited[cur - 1] && cells[cur - 1] == origin) {
+                visited[cur - 1] = true; queue.add(cur - 1)
+            }
+            if (x < w - 1 && !visited[cur + 1] && cells[cur + 1] == origin) {
+                visited[cur + 1] = true; queue.add(cur + 1)
+            }
+            if (y > 0 && !visited[cur - w] && cells[cur - w] == origin) {
+                visited[cur - w] = true; queue.add(cur - w)
+            }
+            if (y < h - 1 && !visited[cur + w] && cells[cur + w] == origin) {
+                visited[cur + w] = true; queue.add(cur + w)
+            }
+        }
+        return count
+    }
+
     /** 锁定/解锁当前页单格（不入撤销栈） */
     fun setLocked(index: Int, value: Boolean): Boolean {
         val locks = locked

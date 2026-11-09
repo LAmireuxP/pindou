@@ -259,6 +259,7 @@ fun ShSearchField(
     onValueChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     OutlinedTextField(
         value = value,
@@ -272,6 +273,7 @@ fun ShSearchField(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
+        trailingIcon = trailing,
         shape = RoundedCornerShape(8.dp),
         colors = OutlinedTextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.colorScheme.surface,

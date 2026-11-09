@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,7 +43,7 @@ import java.io.FileOutputStream
 enum class Screen { HOME, CROP, PARAMS, PREVIEW, EDITOR, CONSTRUCTION }
 
 /** 编辑工具 */
-enum class EditorTool { PAINT, ERASE, PICKER, FILL }
+enum class EditorTool { PAINT, ERASE, PICKER, FILL, PAN }
 
 /** 生成过程中的 UI 状态 */
 sealed interface GenState {
@@ -156,6 +157,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var editorTool by mutableStateOf(EditorTool.PAINT)
     var editorColor by mutableIntStateOf(0) // palette 索引
+    /** 方形笔刷边长：1 / 3 / 5 格 */
+    var editorBrushSize by mutableIntStateOf(1)
+    /** 最近使用色（调色板索引），只保留 8 个，最新的在最前 */
+    val editorRecentColors = mutableStateListOf<Int>()
     var editorShowCodes by mutableStateOf(true)
     var editorShowGrid by mutableStateOf(true)
     var editorRevision by mutableIntStateOf(0)
@@ -163,6 +168,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun notifyEditorChanged() {
         editorRevision++
+    }
+
+    /** 统一入口：选色后自动切回画笔，并记录最近使用 */
+    fun selectEditorColor(index: Int) {
+        val size = selectedPalette?.colors?.size ?: return
+        if (size == 0) return
+        val safe = index.coerceIn(0, size - 1)
+        editorColor = safe
+        editorRecentColors.remove(safe)
+        editorRecentColors.add(0, safe)
+        while (editorRecentColors.size > 8) editorRecentColors.removeAt(editorRecentColors.lastIndex)
+        editorTool = EditorTool.PAINT
     }
 
     init {
@@ -830,6 +847,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
         projectPages = remapped
         selectedPalette = newPalette
+        // 新品牌色号数量可能不同，旧索引越界会让编辑页顶部色块直接崩
+        editorColor = editorColor.coerceIn(0, newPalette.colors.lastIndex)
+        editorRecentColors.clear()
         val id = currentProjectId
         if (id != null) {
             viewModelScope.launch {

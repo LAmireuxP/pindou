@@ -185,4 +185,82 @@ class EditorEngineTest {
         assertEquals(16, e.pages[1].size)
         assertEquals(9, e.pages[1].count { it == 2 }) // 9 个旧格全部保留
     }
+
+    // ---- replaceColorOnPage ----
+
+    @Test
+    fun `同色替换整页并一次撤销还原`() {
+        val e = EditorEngine(3, 3, IntArray(9) { i -> if (i % 2 == 0) 1 else 2 })
+        assertTrue(e.replaceColorOnPage(1, 7))
+        assertEquals(5, e.cells.count { it == 7 })
+        assertEquals(4, e.cells.count { it == 2 })
+        assertTrue(e.undo())
+        assertEquals(5, e.cells.count { it == 1 })
+        assertEquals(0, e.cells.count { it == 7 })
+        assertFalse(e.canUndo) // 只入了一条历史
+        assertTrue(e.redo())
+        assertEquals(5, e.cells.count { it == 7 })
+    }
+
+    @Test
+    fun `同色替换跳过锁定格`() {
+        val e = EditorEngine(3, 3, IntArray(9) { 1 })
+        e.setLocked(0, true)
+        e.setLocked(4, true)
+        assertTrue(e.replaceColorOnPage(1, 9))
+        assertEquals(1, e.cells[0])
+        assertEquals(1, e.cells[4])
+        assertEquals(7, e.cells.count { it == 9 })
+        e.undo()
+        assertEquals(9, e.cells.count { it == 1 })
+    }
+
+    @Test
+    fun `同色替换无目标或目标等于替换色时返回 false`() {
+        val e = EditorEngine(3, 3, IntArray(9) { 1 })
+        assertFalse(e.replaceColorOnPage(1, 1))
+        assertFalse(e.replaceColorOnPage(5, 9))
+        assertFalse(e.canUndo)
+    }
+
+    @Test
+    fun `同色替换全锁定返回 false 不入历史`() {
+        val e = EditorEngine(2, 2, IntArray(4) { 3 })
+        repeat(4) { e.setLocked(it, true) }
+        assertFalse(e.replaceColorOnPage(3, 8))
+        assertFalse(e.canUndo)
+    }
+
+    @Test
+    fun `同色替换只作用于当前页`() {
+        val e = EditorEngine(3, 3, listOf(IntArray(9) { 1 }, IntArray(9) { 1 }))
+        assertTrue(e.replaceColorOnPage(1, 6))
+        e.setPage(1)
+        assertEquals(9, e.cells.count { it == 1 })
+    }
+
+    // ---- connectedRegionSize ----
+
+    @Test
+    fun `连通块大小只统计四连通同色区域`() {
+        // 1 1 2
+        // 1 2 2
+        // 3 3 2
+        val e = EditorEngine(3, 3, intArrayOf(1, 1, 2, 1, 2, 2, 3, 3, 2))
+        assertEquals(3, e.connectedRegionSize(0))
+        assertEquals(2, e.connectedRegionSize(7))
+        assertEquals(4, e.connectedRegionSize(8))
+        assertEquals(4, e.connectedRegionSize(4))
+        assertEquals(0, e.connectedRegionSize(-1))
+        assertEquals(0, e.connectedRegionSize(99))
+    }
+
+    @Test
+    fun `连通块统计不产生撤销记录`() {
+        val e = EditorEngine(2, 2, intArrayOf(-1, -1, -1, 1))
+        assertEquals(3, e.connectedRegionSize(0))
+        assertFalse(e.canUndo)
+        assertEquals(0, e.revision)
+    }
 }
+
