@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -18,11 +19,8 @@ import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +42,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.pindou.app.core.image.CropRect
 import com.pindou.app.core.image.ImageTransforms
+import com.pindou.app.ui.shadcn.Button
+import com.pindou.app.ui.shadcn.OutlinedButton
+import com.pindou.app.ui.shadcn.ShChip
+import com.pindou.app.ui.shadcn.ShPageHeader
+import com.pindou.app.ui.shadcn.TextButton
 import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 import kotlin.math.abs
@@ -92,9 +95,9 @@ fun CropScreen(vm: AppViewModel) {
             .padding(horizontal = Spacing.md),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
-        Text(
-            "裁剪与旋转",
-            style = MaterialTheme.typography.displayLarge,
+        ShPageHeader(
+            title = "裁剪与旋转",
+            subtitle = "拖动选区、四角调整大小；框选更大更准",
             modifier = Modifier.padding(top = Spacing.lg),
         )
 
@@ -154,44 +157,67 @@ fun CropScreen(vm: AppViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        // 变换操作是命令而非筛选，按 shadcn outline 按钮等宽排布，触控高度 40dp 更好点
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            FilterChip(
-                selected = false,
+            OutlinedButton(
                 onClick = { vm.rotateImage(false) },
-                label = { Text("左转") },
-                leadingIcon = { androidx.compose.material3.Icon(Icons.AutoMirrored.Filled.RotateLeft, contentDescription = null) },
-            )
-            FilterChip(
-                selected = false,
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp),
+            ) {
+                androidx.compose.material3.Icon(
+                    Icons.AutoMirrored.Filled.RotateLeft,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text("左转", modifier = Modifier.padding(start = 4.dp))
+            }
+            OutlinedButton(
                 onClick = { vm.rotateImage(true) },
-                label = { Text("右转") },
-                leadingIcon = { androidx.compose.material3.Icon(Icons.AutoMirrored.Filled.RotateRight, contentDescription = null) },
-            )
-            FilterChip(
-                selected = false,
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp),
+            ) {
+                androidx.compose.material3.Icon(
+                    Icons.AutoMirrored.Filled.RotateRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text("右转", modifier = Modifier.padding(start = 4.dp))
+            }
+            OutlinedButton(
                 onClick = { vm.mirrorImage(true) },
-                label = { Text("镜像") },
-                leadingIcon = { androidx.compose.material3.Icon(Icons.Filled.Flip, contentDescription = null) },
-            )
-            FilterChip(
-                selected = false,
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp),
+            ) {
+                androidx.compose.material3.Icon(
+                    Icons.Filled.Flip,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text("镜像", modifier = Modifier.padding(start = 4.dp))
+            }
+            OutlinedButton(
                 onClick = { vm.resetImageTransforms() },
-                label = { Text("重置") },
-                leadingIcon = { androidx.compose.material3.Icon(Icons.Outlined.RestartAlt, contentDescription = null) },
-            )
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp),
+            ) {
+                androidx.compose.material3.Icon(
+                    Icons.Outlined.RestartAlt,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text("重置", modifier = Modifier.padding(start = 4.dp))
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            FilterChip(
+            ShChip(
+                text = "辅助线·${guides.label}",
                 selected = guides != CropGuides.NONE,
                 onClick = { guides = guides.next() },
-                label = { Text("辅助线·${guides.label}") },
             )
-            FilterChip(
+            ShChip(
+                text = if (aspectLocked) "已锁定 ${vm.gridW}:${vm.gridH}" else "锁定网格比例",
                 selected = aspectLocked,
                 onClick = { aspectLocked = !aspectLocked },
-                label = {
-                    Text(if (aspectLocked) "已锁定 ${vm.gridW}:${vm.gridH}" else "锁定网格比例")
-                },
             )
         }
 
@@ -202,13 +228,16 @@ fun CropScreen(vm: AppViewModel) {
             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = { vm.backToHome() }) {
+            OutlinedButton(
+                onClick = { vm.backToHome() },
+                modifier = Modifier.height(48.dp),
+            ) {
                 Text("返回")
             }
             Spacer(Modifier.weight(1f))
             Button(
                 onClick = { vm.confirmCrop() },
-                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.height(48.dp),
             ) {
                 Text("下一步")
             }
@@ -353,11 +382,12 @@ private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, guides: CropGuide
         drawGuides(guides, cl, ct, w, h)
     }
 
-    // 边框
-    drawRect(Color.White, Offset(cl, ct), Size(w, h), style = Stroke(2.dp.toPx()))
+    // 边框：白色打底 + 主色蓝内描边。浅色照片上白框会隐身，深色照片上纯蓝又会糊，
+    // 双层描边保证任何底图上选区边界都看得见。
+    drawRect(Color.White.copy(alpha = 0.9f), Offset(cl, ct), Size(w, h), style = Stroke(5.dp.toPx()))
+    drawRect(ClayColors.Primary, Offset(cl, ct), Size(w, h), style = Stroke(2.dp.toPx()))
     // 角柄：L 形括弧（拖拽语义清晰、视觉面积大）
-    val arm = 18.dp.toPx()
-    val stroke = Stroke(4.dp.toPx(), cap = StrokeCap.Round)
+    val arm = 22.dp.toPx()
     val bracket = listOf(
         // 左上
         Offset(cl, ct) to Offset(cl + arm, ct),
@@ -372,18 +402,19 @@ private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, guides: CropGuide
         Offset(cr, cb) to Offset(cr - arm, cb),
         Offset(cr, cb) to Offset(cr, cb - arm),
     )
-    bracket.forEach { (a, b) -> drawLine(Color.White, a, b, stroke.width, cap = StrokeCap.Round) }
-    // 边柄：四边中点小圆点（可按住整条边中段拖动）
-    val midDotR = 5.dp.toPx()
-    arrayOf(
-        Offset(cl, (ct + cb) / 2f),
-        Offset(cr, (ct + cb) / 2f),
-        Offset((cl + cr) / 2f, ct),
-        Offset((cl + cr) / 2f, cb),
-    ).forEach { m ->
-        drawCircle(Color.White, midDotR, m)
-        drawCircle(ClayColors.BrandPink, midDotR * 0.5f, m)
-    }
+    // 先画一层白色粗线作对比垫底，再叠主色，避免角柄在浅色背景里消失
+    bracket.forEach { (a, b) -> drawLine(Color.White, a, b, 9.dp.toPx(), cap = StrokeCap.Round) }
+    bracket.forEach { (a, b) -> drawLine(ClayColors.Primary, a, b, 5.dp.toPx(), cap = StrokeCap.Round) }
+    // 边柄：四边中点短条（视觉比圆点更明显，命中区仍是整条边中段）
+    val barLen = 26.dp.toPx()
+    val bars = listOf(
+        Offset(cl, (ct + cb) / 2f - barLen / 2f) to Offset(cl, (ct + cb) / 2f + barLen / 2f),
+        Offset(cr, (ct + cb) / 2f - barLen / 2f) to Offset(cr, (ct + cb) / 2f + barLen / 2f),
+        Offset((cl + cr) / 2f - barLen / 2f, ct) to Offset((cl + cr) / 2f + barLen / 2f, ct),
+        Offset((cl + cr) / 2f - barLen / 2f, cb) to Offset((cl + cr) / 2f + barLen / 2f, cb),
+    )
+    bars.forEach { (a, b) -> drawLine(Color.White, a, b, 11.dp.toPx(), cap = StrokeCap.Round) }
+    bars.forEach { (a, b) -> drawLine(ClayColors.Primary, a, b, 6.dp.toPx(), cap = StrokeCap.Round) }
 }
 
 /** 拖一条边：自由模式只动该边；锁定比例时另一轴联动并保持原中心 */

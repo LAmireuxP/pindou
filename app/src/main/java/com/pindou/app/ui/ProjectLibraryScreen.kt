@@ -1,32 +1,37 @@
 package com.pindou.app.ui
 
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.GridOn
+import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,19 +40,31 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pindou.app.core.data.ProjectEntity
+import com.pindou.app.ui.shadcn.ShCard
+import com.pindou.app.ui.shadcn.ShChip
+import com.pindou.app.ui.shadcn.ShIconTile
+import com.pindou.app.ui.shadcn.ShPageHeader
+import com.pindou.app.ui.shadcn.ShSearchField
+import com.pindou.app.ui.shadcn.ShSectionHeader
+import com.pindou.app.ui.shadcn.TextButton
 import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 项目库首页：新建入口 + 项目卡片网格 */
+/**
+ * 项目库首页。布局遵循 shadcn/ui dashboard 结构：
+ * 页面标题 → 主操作卡（白底描边）→ 次级入口双卡 → 内容区（搜索 + 筛选 + 网格）。
+ */
 @Composable
 fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: () -> Unit = {}) {
     // 必须订阅（collectAsState）而非读 .value：StateFlow 配 WhileSubscribed 时读取不会启动上游查询
@@ -65,156 +82,159 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
             .padding(horizontal = Spacing.md),
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
-        Text(
-            text = "拼豆图纸",
-            style = MaterialTheme.typography.displayLarge,
-            modifier = Modifier.padding(top = Spacing.lg),
+        ShPageHeader(
+            title = "拼豆图纸",
+            subtitle = "导入照片，生成可直接照着拼的图纸",
+            modifier = Modifier.padding(top = Spacing.lg, bottom = Spacing.xxs),
         )
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = ClayColors.BrandPink,
-                contentColor = ClayColors.OnPrimary,
-            ),
-            shape = MaterialTheme.shapes.extraLarge,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    vm.startNewProject()
-                    onPickImage()
-                },
-        ) {
-            Column(Modifier.padding(Spacing.lg)) {
-                Text("导入一张照片", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "选一张图，一键生成拼豆图纸",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = Spacing.xs),
-                )
-            }
-        }
 
-        Row(
+        // 主入口：白卡 + 品牌蓝图标块 + 右箭头，点击后打开系统图片选择器
+        ShCard(
+            onClick = {
+                vm.startNewProject()
+                onPickImage()
+            },
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = ClayColors.BrandMint),
-                shape = MaterialTheme.shapes.large,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable {
-                        vm.startNewProject()
-                        vm.startBlankCanvas()
-                    },
+            Row(
+                modifier = Modifier.padding(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.padding(Spacing.md)) {
-                    Text("空白画布", style = MaterialTheme.typography.titleMedium)
+                ShIconTile(Icons.Rounded.AddPhotoAlternate, Color(0xFFDBEAFE), ClayColors.Primary)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = Spacing.sm),
+                ) {
+                    Text("导入一张照片", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "${vm.gridW}×${vm.gridH} · 从零开始",
+                        "自动简化配色并映射到实体色卡",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            }
-            Card(
-                colors = CardDefaults.cardColors(containerColor = ClayColors.BrandLavender),
-                shape = MaterialTheme.shapes.large,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { textDialogOpen = true },
-            ) {
-                Column(Modifier.padding(Spacing.md)) {
-                    Text("文字拼豆", style = MaterialTheme.typography.titleMedium)
-                    Text("打字生成图纸", style = MaterialTheme.typography.bodySmall)
-                }
+                Icon(
+                    Icons.Rounded.ArrowForward,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            Text("我的作品", style = MaterialTheme.typography.titleLarge)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "${visibleProjects.size} 个",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                TextButton(onClick = onPickBpat) { Text("导入 .bpat") }
-            }
+            SecondaryEntry(
+                icon = Icons.Rounded.GridOn,
+                iconBg = Color(0xFFCCFBF1),
+                iconTint = ClayColors.BrandTeal,
+                title = "空白画布",
+                subtitle = "${vm.gridW}×${vm.gridH} · 从零开始",
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    vm.startNewProject()
+                    vm.startBlankCanvas()
+                },
+            )
+            SecondaryEntry(
+                icon = Icons.Rounded.TextFields,
+                iconBg = Color(0xFFEDE9FE),
+                iconTint = ClayColors.BrandPink,
+                title = "文字拼豆",
+                subtitle = "打字生成图纸",
+                modifier = Modifier.weight(1f),
+                onClick = { textDialogOpen = true },
+            )
         }
 
-        // 搜索 + 收藏/专辑筛选
-        OutlinedTextField(
+        ShSectionHeader(
+            title = "我的作品",
+            modifier = Modifier.padding(top = Spacing.xxs),
+        ) {
+            Text(
+                "${visibleProjects.size} 个",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(Spacing.xs))
+            TextButton(onClick = onPickBpat) { Text("导入 .bpat") }
+        }
+
+        ShSearchField(
             value = vm.libraryQuery,
             onValueChange = { vm.libraryQuery = it },
-            singleLine = true,
-            label = { Text("搜索图纸") },
-            modifier = Modifier.fillMaxWidth(),
+            placeholder = "搜索图纸名称或专辑",
         )
+
+        // 收藏 / 专辑筛选：横向滚动的 pill chip
         Row(
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
         ) {
-            FilterChip(
+            ShChip(
+                text = "全部",
                 selected = !vm.libraryFavOnly && vm.libraryAlbum == null,
                 onClick = {
                     vm.libraryFavOnly = false
                     vm.libraryAlbum = null
                 },
-                label = { Text("全部") },
             )
-            FilterChip(
+            ShChip(
+                text = "★ 收藏",
                 selected = vm.libraryFavOnly,
                 onClick = {
                     vm.libraryFavOnly = !vm.libraryFavOnly
                     vm.libraryAlbum = null
                 },
-                label = { Text("★ 收藏") },
             )
             vm.albumNames(projects).forEach { album ->
-                FilterChip(
+                ShChip(
+                    text = album,
                     selected = vm.libraryAlbum == album,
                     onClick = { vm.libraryAlbum = if (vm.libraryAlbum == album) null else album },
-                    label = { Text(album) },
                 )
             }
         }
 
         vm.lastError?.let { err ->
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                modifier = Modifier.fillMaxWidth(),
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .padding(Spacing.sm),
             ) {
                 Text(
                     err,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(Spacing.sm),
                 )
             }
         }
 
         if (projects.isEmpty()) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            ShCard(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(Spacing.lg)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                        BeadDot(ClayColors.BrandPeach)
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                         BeadDot(ClayColors.BrandMint)
-                        BeadDot(ClayColors.BrandLavender)
                         BeadDot(ClayColors.BrandOchre)
-                        BeadDot(ClayColors.BrandCoral)
+                        BeadDot(ClayColors.BrandBlue)
+                        BeadDot(ClayColors.BrandPink)
                     }
                     Text(
-                        "还没有作品，点上面的粉色卡片开始",
-                        style = MaterialTheme.typography.bodyMedium,
+                        "还没有作品",
+                        style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(top = Spacing.md),
+                    )
+                    Text(
+                        "点上面的「导入一张照片」开始，生成的图纸会自动保存在这里",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = Spacing.xxs),
                     )
                 }
             }
@@ -261,6 +281,7 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
                         onValueChange = { text = it },
                         label = { Text("输入文字（支持多行）") },
                         minLines = 2,
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
@@ -296,6 +317,7 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
                     onValueChange = { name = it },
                     singleLine = true,
                     label = { Text("项目名") },
+                    shape = RoundedCornerShape(8.dp),
                 )
             },
             confirmButton = {
@@ -335,6 +357,7 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
                         onValueChange = { album = it },
                         singleLine = true,
                         label = { Text("专辑名（留空 = 未分组）") },
+                        shape = RoundedCornerShape(8.dp),
                     )
                 }
             },
@@ -346,6 +369,36 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
             },
             dismissButton = { TextButton(onClick = { albumTarget = null }) { Text("取消") } },
         )
+    }
+}
+
+/** 次级入口卡：白底描边 + 淡色图标块，高度一致保证两卡对齐 */
+@Composable
+private fun SecondaryEntry(
+    icon: ImageVector,
+    iconBg: Color,
+    iconTint: Color,
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    ShCard(onClick = onClick, modifier = modifier) {
+        Column(Modifier.padding(Spacing.md)) {
+            ShIconTile(icon, iconBg, iconTint)
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(top = Spacing.sm),
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -361,64 +414,74 @@ private fun ProjectCard(
     onAlbum: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(12.dp)
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        shape = MaterialTheme.shapes.large,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = { menuOpen = true },
             ),
     ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .background(MaterialTheme.colorScheme.surfaceContainerLowest),
-                contentAlignment = Alignment.Center,
-            ) {
-                val thumb = remember(project.thumbnailPath, project.updatedAt) {
-                    project.thumbnailPath?.let { path ->
-                        runCatching { BitmapFactory.decodeFile(path)?.asImageBitmap() }.getOrNull()
-                    }
-                }
-                if (thumb != null) {
-                    Image(
-                        bitmap = thumb,
-                        contentDescription = project.name,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit,
-                    )
-                } else {
-                    BeadDot(ClayColors.BrandMint)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            val thumb = remember(project.thumbnailPath, project.updatedAt) {
+                project.thumbnailPath?.let { path ->
+                    runCatching { BitmapFactory.decodeFile(path)?.asImageBitmap() }.getOrNull()
                 }
             }
-            Column(Modifier.padding(Spacing.sm)) {
-                Text(
-                    // 收藏项目在标题前加星标，一眼可辨
-                    if (project.fav) "★ ${project.name}" else project.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            if (thumb != null) {
+                Image(
+                    bitmap = thumb,
+                    contentDescription = project.name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
                 )
+            } else {
+                BeadDot(ClayColors.BrandMint)
+            }
+            if (project.fav) {
                 Text(
-                    buildString {
-                        append("${project.width}×${project.height} · ${project.paletteBrand}")
-                        if (project.album.isNotBlank()) append(" · ${project.album}")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-                Text(
-                    relativeTime(project.updatedAt),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "★",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = ClayColors.BrandOchre,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp),
                 )
             }
+        }
+        Column(Modifier.padding(horizontal = Spacing.sm, vertical = 10.dp)) {
+            Text(
+                project.name,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                buildString {
+                    append("${project.width}×${project.height} · ${project.paletteBrand}")
+                    if (project.album.isNotBlank()) append(" · ${project.album}")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                relativeTime(project.updatedAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 
@@ -479,14 +542,14 @@ private fun relativeTime(time: Long): String {
 private fun BeadDot(color: Color) {
     Box(
         modifier = Modifier
-            .size(40.dp)
-            .background(color, CircleShape),
+            .size(28.dp)
+            .background(color, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .size(14.dp)
-                .background(Color.White.copy(alpha = 0.85f), CircleShape),
+                .size(10.dp)
+                .background(Color.White.copy(alpha = 0.9f), RoundedCornerShape(3.dp)),
         )
     }
 }

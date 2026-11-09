@@ -30,7 +30,7 @@ object ExportRenderer {
         val titleHeightPx: Int = 0,
     )
 
-    private const val BG = 0xFFFFFAF0.toInt()          // 奶油画布
+    private const val BG = 0xFFFAFAFA.toInt()          // 与 App 画布一致的 zinc-50
     private const val GRID_LINE = 0x33000000          // 半透明黑
     private const val TEXT_DARK = 0xFF333333.toInt()
     private const val TEXT_LIGHT = 0xFFF5F5F5.toInt()

@@ -14,24 +14,19 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +38,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.pindou.app.core.pattern.GenerationStage
+import com.pindou.app.ui.shadcn.Button
+import com.pindou.app.ui.shadcn.ShCard
+import com.pindou.app.ui.shadcn.ShChip
+import com.pindou.app.ui.shadcn.ShPageHeader
+import com.pindou.app.ui.shadcn.TextButton
 import com.pindou.app.ui.theme.Spacing
 
 private val GridPresets = listOf("29×29", "15×15", "58×58", "自适应", "自定义")
@@ -56,7 +56,6 @@ fun ParamsScreen(vm: AppViewModel) {
     var paletteMenuOpen by remember { mutableStateOf(false) }
     var showTextEditor by remember { mutableStateOf(false) }
     val beadSizeTag = palette?.beadSize?.name ?: "MM5"
-    val beadSizeLabel = if (beadSizeTag == "MM2_6") "2.6mm 小豆" else "5mm 普通豆"
     val availablePalettes = vm.palettesFor(beadSizeTag)
 
     Column(
@@ -66,17 +65,16 @@ fun ParamsScreen(vm: AppViewModel) {
             .padding(horizontal = Spacing.md),
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
-        Text(
-            "参数设置",
-            style = MaterialTheme.typography.displayLarge,
+        ShPageHeader(
+            title = "参数设置",
+            subtitle = "网格决定颗粒度，色卡决定能买到的豆子",
             modifier = Modifier.padding(top = Spacing.lg),
         )
 
         bitmap?.let {
-            Card(shape = MaterialTheme.shapes.large) {
+            ShCard(modifier = Modifier.fillMaxWidth()) {
                 Box {
-                    // 文字位图比例极端（如 16×29），Crop 固定高度 170dp 会把字裁掉；
-                    // 文字模式用 Fit + 自适应高度，确保完整显示
+                    // 文字位图比例极端（如 16×29），固定高度会把字裁掉；文字模式用 Fit + 自适应高度
                     val isTxt = vm.textSource != null
                     Image(
                         bitmap = it.asImageBitmap(),
@@ -85,58 +83,49 @@ fun ParamsScreen(vm: AppViewModel) {
                             .fillMaxWidth()
                             .then(
                                 if (isTxt) Modifier.heightIn(max = 280.dp)
-                                else Modifier.height(170.dp)
+                                else Modifier.height(180.dp)
                             ),
                         contentScale = if (isTxt) ContentScale.Fit else ContentScale.Crop,
                     )
-                    if (vm.textSource != null) {
-                        // 文字拼豆模式：改文字入口
-                        FilterChip(
-                            selected = false,
-                            onClick = { showTextEditor = true },
-                            label = { Text("改文字") },
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(Spacing.xs),
-                        )
-                    } else {
-                        FilterChip(
-                            selected = false,
-                            onClick = { vm.openCrop() },
-                            label = { Text("重新裁剪") },
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(Spacing.xs),
-                        )
-                    }
+                    ShChip(
+                        text = if (vm.textSource != null) "改文字" else "重新裁剪",
+                        selected = false,
+                        onClick = {
+                            if (vm.textSource != null) showTextEditor = true else vm.openCrop()
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(Spacing.xs),
+                    )
                 }
             }
         }
 
         // 文字拼豆改文字对话框
         if (showTextEditor) {
-            var edit_text by remember { mutableStateOf(vm.textSource ?: "") }
+            var editText by remember { mutableStateOf(vm.textSource ?: "") }
             AlertDialog(
                 onDismissRequest = { showTextEditor = false },
                 title = { Text("改文字") },
                 text = {
                     OutlinedTextField(
-                        value = edit_text,
-                        onValueChange = { edit_text = it },
+                        value = editText,
+                        onValueChange = { editText = it },
                         label = { Text("输入文字（支持多行）") },
                         minLines = 2,
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 },
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            if (edit_text.isNotBlank()) {
-                                vm.regenerateFromText(edit_text)
+                            if (editText.isNotBlank()) {
+                                vm.regenerateFromText(editText)
                                 showTextEditor = false
                             }
                         },
-                        enabled = edit_text.isNotBlank(),
+                        enabled = editText.isNotBlank(),
                     ) { Text("重新生成") }
                 },
                 dismissButton = { TextButton(onClick = { showTextEditor = false }) { Text("取消") } },
@@ -150,18 +139,21 @@ fun ParamsScreen(vm: AppViewModel) {
             label = { Text("图纸名称") },
             placeholder = { Text("未命名图纸") },
             singleLine = true,
+            shape = RoundedCornerShape(8.dp),
             modifier = Modifier.fillMaxWidth(),
         )
 
         // 网格尺寸
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                Text("网格尺寸", style = MaterialTheme.typography.titleMedium)
+                Text("网格尺寸", style = MaterialTheme.typography.titleLarge)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 ) {
                     GridPresets.forEach { p ->
-                        FilterChip(
+                        ShChip(
+                            text = p,
                             selected = preset == p,
                             onClick = {
                                 preset = p
@@ -172,7 +164,6 @@ fun ParamsScreen(vm: AppViewModel) {
                                     "自适应" -> vm.applyAdaptiveSize()
                                 }
                             },
-                            label = { Text(p) },
                         )
                     }
                 }
@@ -182,7 +173,7 @@ fun ParamsScreen(vm: AppViewModel) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                     ) {
-                        Text("放大倍数", style = MaterialTheme.typography.titleSmall)
+                        Text("放大倍数", style = MaterialTheme.typography.labelLarge)
                         Slider(
                             value = vm.adaptiveScale,
                             onValueChange = { vm.updateAdaptiveScale(it) },
@@ -192,7 +183,7 @@ fun ParamsScreen(vm: AppViewModel) {
                         )
                         Text(
                             "${vm.gridW}×${vm.gridH}",
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.labelLarge,
                         )
                     }
                 }
@@ -203,6 +194,7 @@ fun ParamsScreen(vm: AppViewModel) {
                             onValueChange = { v -> v.toIntOrNull()?.let { vm.setGridSize(it, vm.gridH) } },
                             label = { Text("宽") },
                             modifier = Modifier.widthIn(min = 100.dp),
+                            shape = RoundedCornerShape(8.dp),
                             singleLine = true,
                         )
                         OutlinedTextField(
@@ -210,13 +202,14 @@ fun ParamsScreen(vm: AppViewModel) {
                             onValueChange = { v -> v.toIntOrNull()?.let { vm.setGridSize(vm.gridW, it) } },
                             label = { Text("高") },
                             modifier = Modifier.widthIn(min = 100.dp),
+                            shape = RoundedCornerShape(8.dp),
                             singleLine = true,
                         )
                     }
                 }
                 Text(
                     "共 ${vm.gridW * vm.gridH} 粒豆子",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 // 图片比例与网格比例差异大时提示拉伸（降采样是宽高独立映射）
@@ -236,11 +229,12 @@ fun ParamsScreen(vm: AppViewModel) {
         }
 
         // 豆子规格 + 色卡
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                Text("豆子与色卡", style = MaterialTheme.typography.titleMedium)
+                Text("豆子与色卡", style = MaterialTheme.typography.titleLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    FilterChip(
+                    ShChip(
+                        text = "5mm 普通豆",
                         selected = beadSizeTag == "MM5",
                         onClick = {
                             val five = vm.palettesFor("MM5")
@@ -248,15 +242,14 @@ fun ParamsScreen(vm: AppViewModel) {
                                 vm.selectPalette(five.firstOrNull { it.brand == "MARD" } ?: five.first())
                             }
                         },
-                        label = { Text("5mm 普通豆") },
                     )
-                    FilterChip(
+                    ShChip(
+                        text = "2.6mm 小豆",
                         selected = beadSizeTag == "MM2_6",
                         onClick = {
                             val mini = vm.palettesFor("MM2_6")
                             if (mini.isNotEmpty()) vm.selectPalette(mini.first())
                         },
-                        label = { Text("2.6mm 小豆") },
                     )
                 }
                 if (palette != null) {
@@ -270,6 +263,7 @@ fun ParamsScreen(vm: AppViewModel) {
                             readOnly = true,
                             label = { Text("色卡（${availablePalettes.size} 套可选）") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = paletteMenuOpen) },
+                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
                                 .menuAnchor()
                                 .fillMaxWidth(),
@@ -290,88 +284,77 @@ fun ParamsScreen(vm: AppViewModel) {
             }
         }
 
-        // 内容简化 + 颜色数与进阶
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        // 内容简化 + 进阶选项
+        ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                Text("内容简化", style = MaterialTheme.typography.titleMedium)
+                Text("内容简化", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "先把照片简化成干净色块再转色号（默认卡通化）。简化的粗细自动跟随网格大小",
+                    "先把照片简化成干净色块再转色号。简化的粗细自动跟随网格大小",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
                     listOf(
                         com.pindou.app.core.pattern.ContentSimplifier.Mode.OFF to "原图",
                         com.pindou.app.core.pattern.ContentSimplifier.Mode.CARTOON to "卡通化",
                         com.pindou.app.core.pattern.ContentSimplifier.Mode.EDGE to "边缘增强",
                     ).forEach { (mode, label) ->
-                        FilterChip(
+                        ShChip(
+                            text = label,
                             selected = vm.contentMode == mode,
                             onClick = { vm.contentMode = mode },
-                            label = { Text(label) },
                         )
                     }
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("限制最大颜色数", style = MaterialTheme.typography.titleMedium)
-                    Switch(checked = vm.limitColors, onCheckedChange = { vm.limitColors = it })
-                }
+                SwitchRow(
+                    title = "限制最大颜色数",
+                    subtitle = null,
+                    checked = vm.limitColors,
+                    onCheckedChange = { vm.limitColors = it },
+                )
                 if (vm.limitColors) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                    ) {
                         Slider(
                             value = vm.maxColors.toFloat(),
                             onValueChange = { vm.maxColors = it.toInt() },
                             valueRange = 4f..48f,
                             modifier = Modifier.weight(1f),
                         )
-                        Text("${vm.maxColors} 色", style = MaterialTheme.typography.titleMedium)
+                        Text("${vm.maxColors} 色", style = MaterialTheme.typography.labelLarge)
                     }
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("移除背景", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "自动去掉照片边缘的纯色背景（适合白底商品图/证件照）",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = vm.removeBackground, onCheckedChange = { vm.removeBackground = it })
-                }
+                SwitchRow(
+                    title = "移除背景",
+                    subtitle = "自动去掉照片边缘的纯色背景（适合白底商品图/证件照）",
+                    checked = vm.removeBackground,
+                    onCheckedChange = { vm.removeBackground = it },
+                )
                 if (vm.removeBackground) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                    ) {
                         Slider(
                             value = vm.backgroundTolerance,
                             onValueChange = { vm.backgroundTolerance = it },
                             valueRange = 4f..30f,
                             modifier = Modifier.weight(1f),
                         )
-                        Text("容差 ${vm.backgroundTolerance.toInt()}", style = MaterialTheme.typography.titleSmall)
+                        Text("容差 ${vm.backgroundTolerance.toInt()}", style = MaterialTheme.typography.labelLarge)
                     }
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text("Floyd–Steinberg 抖动", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "进阶选项，默认关闭（抖动图更难拼）",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = vm.dithering, onCheckedChange = { vm.dithering = it })
-                }
+                SwitchRow(
+                    title = "Floyd–Steinberg 抖动",
+                    subtitle = "进阶选项，默认关闭（抖动图更难拼）",
+                    checked = vm.dithering,
+                    onCheckedChange = { vm.dithering = it },
+                )
             }
         }
 
@@ -395,7 +378,8 @@ fun ParamsScreen(vm: AppViewModel) {
                             GenerationStage.LIMIT -> "限色合并中…"
                             GenerationStage.DONE -> "完成"
                         },
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -419,9 +403,8 @@ fun ParamsScreen(vm: AppViewModel) {
                 vm.genState !is GenState.Running,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = Spacing.lg),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-            shape = MaterialTheme.shapes.medium,
+                .padding(bottom = Spacing.lg)
+                .height(48.dp),
         ) {
             if (vm.genState is GenState.Running) {
                 CircularProgressIndicator(
@@ -432,5 +415,33 @@ fun ParamsScreen(vm: AppViewModel) {
             }
             Text("生成图纸", modifier = Modifier.padding(start = 8.dp))
         }
+    }
+}
+
+/** 开关行：标题 + 说明在左，Switch 在右，用于设置类卡片内的统一节奏 */
+@Composable
+fun SwitchRow(
+    title: String,
+    subtitle: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

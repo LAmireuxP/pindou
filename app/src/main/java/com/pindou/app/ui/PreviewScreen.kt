@@ -1,6 +1,7 @@
 package com.pindou.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,16 +15,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -33,17 +30,23 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalContext
-import com.pindou.app.core.export.ExportService
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.pindou.app.core.export.ExportService
+import com.pindou.app.ui.shadcn.Button
+import com.pindou.app.ui.shadcn.OutlinedButton
+import com.pindou.app.ui.shadcn.ShCard
+import com.pindou.app.ui.shadcn.SectionTitle
+import com.pindou.app.ui.shadcn.TextButton
 import com.pindou.app.ui.theme.Spacing
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun PreviewScreen(vm: AppViewModel) {
@@ -56,7 +59,7 @@ fun PreviewScreen(vm: AppViewModel) {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("还没有生成结果", style = MaterialTheme.typography.titleMedium)
+            Text("还没有生成结果", style = MaterialTheme.typography.titleLarge)
             Button(onClick = { vm.backToParams() }, modifier = Modifier.padding(top = Spacing.md)) {
                 Text("返回参数设置")
             }
@@ -105,47 +108,50 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = Spacing.lg),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .padding(top = Spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { vm.backToHome() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回项目库")
-                }
+            IconButton(onClick = { vm.backToHome() }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回项目库")
+            }
+            Column(Modifier.weight(1f)) {
+                Text("图纸预览", style = MaterialTheme.typography.displayMedium)
                 Text(
                     "${result.width}×${result.height} · ${result.palette.brandLabel}",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("色号", style = MaterialTheme.typography.bodyMedium)
-                Switch(checked = showCodes, onCheckedChange = { showCodes = it })
-            }
+            Text("色号", style = MaterialTheme.typography.labelLarge)
+            Switch(
+                checked = showCodes,
+                onCheckedChange = { showCodes = it },
+                modifier = Modifier.padding(start = 6.dp),
+            )
         }
 
-        Card(shape = MaterialTheme.shapes.large) {
+        ShCard(modifier = Modifier.fillMaxWidth()) {
             Column {
                 if (pages.size > 1) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = Spacing.md, vertical = 4.dp),
+                            .padding(horizontal = Spacing.sm, vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         TextButton(
                             onClick = { if (pageIdx > 0) pageIdx-- },
                             enabled = pageIdx > 0,
-                        ) { Text("‹") }
+                        ) { Text("‹ 上一页") }
                         Text(
-                            "第 ${pageIdx + 1}/${pages.size} 页",
-                            style = MaterialTheme.typography.bodyMedium,
+                            "${pageIdx + 1} / ${pages.size}",
+                            style = MaterialTheme.typography.labelLarge,
                         )
                         TextButton(
                             onClick = { if (pageIdx < pages.size - 1) pageIdx++ },
                             enabled = pageIdx < pages.size - 1,
-                        ) { Text("›") }
+                        ) { Text("下一页 ›") }
                     }
                 }
                 Box(
@@ -164,25 +170,28 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                            .padding(horizontal = Spacing.sm, vertical = 4.dp),
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = Spacing.sm, vertical = 6.dp),
                     )
                 }
             }
         }
 
-        Text(
-            "共 $total 粒，${usage.size} 种颜色 · 用时 ${result.elapsedMs}ms",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        // 统计条：三段等分，数字用 titleLarge，标签用 labelSmall
+        ShCard(modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(vertical = Spacing.sm)) {
+                Stat("$total", "总粒数", Modifier.weight(1f))
+                Stat("${usage.size}", "颜色数", Modifier.weight(1f))
+                Stat("${result.elapsedMs}ms", "生成耗时", Modifier.weight(1f))
+            }
+        }
 
-        Text("用量清单", style = MaterialTheme.typography.titleLarge)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        SectionTitle("用量清单")
+        ShCard(modifier = Modifier.fillMaxWidth()) {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height((usage.size.coerceAtMost(10) * 44 + 24).dp),
+                    .height((usage.size.coerceAtMost(10) * 48 + 16).dp),
             ) {
                 items(usage.size) { i ->
                     val (idx, count) = usage[i]
@@ -194,11 +203,16 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        ) {
                             Box(
                                 Modifier
-                                    .size(22.dp)
-                                    .background(Color(entry.argb), CircleShape),
+                                    .size(24.dp)
+                                    .background(Color(entry.argb), CircleShape)
+                                    // 描边：T01 这类近白/全透明色号在白卡上会整块消失，加发丝线兜底
+                                    .border(1.dp, Color.Black.copy(alpha = 0.12f), CircleShape),
                             )
                             Column {
                                 Text(entry.code, style = MaterialTheme.typography.titleSmall)
@@ -211,23 +225,20 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                                 }
                             }
                         }
-                        Text(
-                            "$count 粒",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
+                        Text("$count 粒", style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
         }
 
-        Text("导出", style = MaterialTheme.typography.titleLarge)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        SectionTitle("导出")
+        ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(Spacing.md),
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
             ) {
                 val projectName = vm.projectName
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Button(
                         onClick = {
                             runExport("PNG 图纸") {
@@ -235,46 +246,28 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                             }
                         },
                         modifier = Modifier.weight(1f),
-                        shape = MaterialTheme.shapes.small,
                     ) { Text("PNG 图纸") }
-                    Button(
+                    OutlinedButton(
                         onClick = {
                             runExport("符号版") {
                                 ExportService.exportPng(context, pages, projectName, symbol = true)
                             }
                         },
                         modifier = Modifier.weight(1f),
-                        shape = MaterialTheme.shapes.small,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.tertiary,
-                            contentColor = MaterialTheme.colorScheme.onTertiary,
-                        ),
                     ) { Text("符号版") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    Button(
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    OutlinedButton(
                         onClick = {
                             runExport("PDF 打印版") {
                                 ExportService.exportPdf(context, pages, projectName)
                             }
                         },
                         modifier = Modifier.weight(1f),
-                        shape = MaterialTheme.shapes.small,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary,
-                            contentColor = MaterialTheme.colorScheme.onSecondary,
-                        ),
                     ) { Text("PDF 打印版") }
-                    Button(
-                        onClick = {
-                            ExportService.shareList(context, pages, projectName)
-                        },
+                    TextButton(
+                        onClick = { ExportService.shareList(context, pages, projectName) },
                         modifier = Modifier.weight(1f),
-                        shape = MaterialTheme.shapes.small,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                        ),
                     ) { Text("分享清单") }
                 }
                 exportMsg?.let {
@@ -290,38 +283,43 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = Spacing.lg),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                .padding(bottom = Spacing.lg, top = Spacing.xxs),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
-            Button(
+            OutlinedButton(
+                onClick = { vm.backToParams() },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("调整参数")
+            }
+            OutlinedButton(
                 onClick = { vm.enterEditor() },
                 modifier = Modifier.weight(1f),
-                shape = MaterialTheme.shapes.medium,
             ) {
                 Text("编辑图纸")
             }
             Button(
                 onClick = { vm.enterConstruction() },
                 modifier = Modifier.weight(1f),
-                shape = MaterialTheme.shapes.medium,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.tertiary,
-                    contentColor = MaterialTheme.colorScheme.onTertiary,
-                ),
             ) {
                 Text("开始拼")
             }
-            Button(
-                onClick = { vm.backToParams() },
-                modifier = Modifier.weight(1f),
-                shape = MaterialTheme.shapes.medium,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                ),
-            ) {
-                Text("调整参数")
-            }
         }
+    }
+}
+
+/** 统计格：数字 + 标签上下叠放 */
+@Composable
+private fun Stat(value: String, label: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(value, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

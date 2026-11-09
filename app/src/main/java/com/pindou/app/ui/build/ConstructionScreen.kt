@@ -10,13 +10,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -39,6 +39,10 @@ import com.pindou.app.core.build.ConstructionState
 import com.pindou.app.ui.AppViewModel
 import com.pindou.app.ui.CellCodeDrawer.drawCellCode
 import com.pindou.app.ui.GenState
+import com.pindou.app.ui.shadcn.Button
+import com.pindou.app.ui.shadcn.OutlinedButton
+import com.pindou.app.ui.shadcn.ShChip
+import com.pindou.app.ui.shadcn.TextButton
 import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 
@@ -86,21 +90,22 @@ fun ConstructionScreen(vm: AppViewModel) {
             tick // 订阅：进度条与文案随格子操作刷新
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                IconButton(onClick = { vm.exitConstruction() }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "退出施工")
+                }
                 Text(
                     "施工进度 ${state.doneCount}/${state.total}（${(state.progress * 100).toInt()}%）",
                     style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("色号", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = showCodes,
-                        onCheckedChange = { showCodes = it },
-                        modifier = Modifier.padding(horizontal = 4.dp),
-                    )
-                }
+                // 开关换成 chip：和其余页面同一套 shadcn 选择件，也避免大号 Switch 挤标题
+                ShChip(
+                    text = "色号",
+                    selected = showCodes,
+                    onClick = { showCodes = !showCodes },
+                )
             }
             LinearProgressIndicator(
                 progress = { state.progress },
@@ -109,6 +114,34 @@ fun ConstructionScreen(vm: AppViewModel) {
                     .padding(top = Spacing.xs),
             )
             val byRow = state.orientation == ConstructionState.Orientation.ROW
+            // 先选方向再读引导文本：方向 chip 放在「第 N 行」上面，阅读顺序才是先设定后看结果
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Spacing.xs),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // 按行/按列本来就是二选一，用两个 chip 表达比 Switch 两头挂标签直观
+                ShChip(
+                    text = "按行",
+                    selected = state.orientation == ConstructionState.Orientation.ROW,
+                    onClick = {
+                        state.updateOrientation(ConstructionState.Orientation.ROW)
+                        tick++
+                        vm.saveConstructionProgress()
+                    },
+                )
+                ShChip(
+                    text = "按列",
+                    selected = state.orientation == ConstructionState.Orientation.COLUMN,
+                    onClick = {
+                        state.updateOrientation(ConstructionState.Orientation.COLUMN)
+                        tick++
+                        vm.saveConstructionProgress()
+                    },
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -117,7 +150,7 @@ fun ConstructionScreen(vm: AppViewModel) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    if (byRow) "按行 · 第 ${state.cursor + 1} 行" else "按列 · 第 ${state.cursor + 1} 列",
+                    if (byRow) "第 ${state.cursor + 1} 行" else "第 ${state.cursor + 1} 列",
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f),
                 )
@@ -141,26 +174,6 @@ fun ConstructionScreen(vm: AppViewModel) {
                     tick++
                     vm.saveConstructionProgress()
                 }) { Text(if (byRow) "完成本行" else "完成本列") }
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = Spacing.xs),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("按行", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = state.orientation == ConstructionState.Orientation.COLUMN,
-                    onCheckedChange = {
-                        state.updateOrientation(
-                            if (it) ConstructionState.Orientation.COLUMN else ConstructionState.Orientation.ROW,
-                        )
-                        tick++
-                        vm.saveConstructionProgress()
-                    },
-                )
-                Text("按列", style = MaterialTheme.typography.bodyMedium)
             }
         }
 

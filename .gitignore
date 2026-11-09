@@ -28,3 +28,8 @@ keystore/
 *.apk
 pindou/HANDOVER.md
 HANDOVER.md
+
+# 本机调试产物（截图 / uiautomator dump）
+/shot_*.png
+/.screenshot.png
+/ui*.xml

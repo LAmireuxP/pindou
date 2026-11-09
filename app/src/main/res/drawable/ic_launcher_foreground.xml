@@ -1,62 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 前景：拼豆爱心（豆距 8.6dp，收在 66dp 安全圆内） -->
+<!--
+  前景：白色圆角底板 + 2x2 拼豆。
+  四色取 AirDeck 图标色块（teal-400 / amber-500 / blue-500 / violet-500），
+  每颗豆中心留白孔，一眼能看出是「拼豆」而不是普通色块。
+  几何：底板 24..84（60dp，落在自适应图标 66dp 安全圆内），豆 20dp，孔 r3.2。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#7FD8C4" android:pathData="M36.80,28.80 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#7FD8C4" android:pathData="M45.40,28.80 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#7FD8C4" android:pathData="M62.60,28.80 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#7FD8C4" android:pathData="M71.20,28.80 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F03D76" android:pathData="M28.20,37.40 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F03D76" android:pathData="M36.80,37.40 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F03D76" android:pathData="M45.40,37.40 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F03D76" android:pathData="M54.00,37.40 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F03D76" android:pathData="M62.60,37.40 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F03D76" android:pathData="M71.20,37.40 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F03D76" android:pathData="M79.80,37.40 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#FF6B5A" android:pathData="M28.20,46.00 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#FF6B5A" android:pathData="M36.80,46.00 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#FF6B5A" android:pathData="M45.40,46.00 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#FF6B5A" android:pathData="M54.00,46.00 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#FF6B5A" android:pathData="M62.60,46.00 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#FF6B5A" android:pathData="M71.20,46.00 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#FF6B5A" android:pathData="M79.80,46.00 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2C14E" android:pathData="M36.80,54.60 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2C14E" android:pathData="M45.40,54.60 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2C14E" android:pathData="M54.00,54.60 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2C14E" android:pathData="M62.60,54.60 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2C14E" android:pathData="M71.20,54.60 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#0B8574" android:pathData="M45.40,63.20 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#0B8574" android:pathData="M54.00,63.20 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#0B8574" android:pathData="M62.60,63.20 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#0B8574" android:pathData="M54.00,71.80 a3.7,3.7 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M36.80,30.75 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M45.40,30.75 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M62.60,30.75 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M71.20,30.75 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M28.20,39.35 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M36.80,39.35 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M45.40,39.35 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M54.00,39.35 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M62.60,39.35 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M71.20,39.35 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M79.80,39.35 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M28.20,47.95 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M36.80,47.95 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M45.40,47.95 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M54.00,47.95 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M62.60,47.95 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M71.20,47.95 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M79.80,47.95 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M36.80,56.55 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M45.40,56.55 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M54.00,56.55 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M62.60,56.55 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M71.20,56.55 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M45.40,65.15 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M54.00,65.15 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M62.60,65.15 a1.75,1.75 0 1,0 0.01,0 z" />
-    <path android:fillColor="#F2F3F7" android:pathData="M54.00,73.75 a1.75,1.75 0 1,0 0.01,0 z" />
+    <!-- 底板 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,24 h28 a16,16 0 0,1 16,16 v28 a16,16 0 0,1 -16,16 h-28 a16,16 0 0,1 -16,-16 v-28 a16,16 0 0,1 16,-16 z" />
+
+    <!-- 豆 1 青 -->
+    <path
+        android:fillColor="#2DD4BF"
+        android:pathData="M37,31 h8 a6,6 0 0,1 6,6 v8 a6,6 0 0,1 -6,6 h-8 a6,6 0 0,1 -6,-6 v-8 a6,6 0 0,1 6,-6 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M41,37.8 a3.2,3.2 0 1,0 0.01,0 z" />
+
+    <!-- 豆 2 琥珀 -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M63,31 h8 a6,6 0 0,1 6,6 v8 a6,6 0 0,1 -6,6 h-8 a6,6 0 0,1 -6,-6 v-8 a6,6 0 0,1 6,-6 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M67,37.8 a3.2,3.2 0 1,0 0.01,0 z" />
+
+    <!-- 豆 3 蓝 -->
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M37,57 h8 a6,6 0 0,1 6,6 v8 a6,6 0 0,1 -6,6 h-8 a6,6 0 0,1 -6,-6 v-8 a6,6 0 0,1 6,-6 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M41,63.8 a3.2,3.2 0 1,0 0.01,0 z" />
+
+    <!-- 豆 4 紫 -->
+    <path
+        android:fillColor="#8B5CF6"
+        android:pathData="M63,57 h8 a6,6 0 0,1 6,6 v8 a6,6 0 0,1 -6,6 h-8 a6,6 0 0,1 -6,-6 v-8 a6,6 0 0,1 6,-6 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M67,63.8 a3.2,3.2 0 1,0 0.01,0 z" />
 </vector>

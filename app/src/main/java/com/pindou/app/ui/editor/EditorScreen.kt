@@ -4,20 +4,26 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Colorize
@@ -26,7 +32,7 @@ import androidx.compose.material.icons.filled.FormatPaint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -67,6 +73,7 @@ import com.pindou.app.ui.AppViewModel
 import com.pindou.app.ui.EditorTool
 import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
+import com.pindou.app.ui.shadcn.ShChip
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.hypot
 import kotlin.math.max
@@ -146,13 +153,18 @@ fun EditorScreen(vm: AppViewModel) {
                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "撤销")
                 }
                 IconButton(onClick = { vm.redoEditor() }, enabled = engine.canRedo) {
-                    Icon(Icons.Filled.Redo, contentDescription = "重做")
+                    Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "重做")
                 }
                 IconButton(onClick = { showMenu = true }) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "更多")
                 }
-                TextButton(onClick = { vm.finishEditor() }) {
-                    Text("完成")
+                Button(
+                    onClick = { vm.finishEditor() },
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+                    modifier = Modifier.height(36.dp),
+                ) {
+                    Text("完成", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -161,7 +173,15 @@ fun EditorScreen(vm: AppViewModel) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
+                .weight(1f)
+                .padding(horizontal = Spacing.xs)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outline,
+                    RoundedCornerShape(12.dp),
+                ),
         ) {
             EditorCanvas(
                 engine = engine,
@@ -193,73 +213,102 @@ fun EditorScreen(vm: AppViewModel) {
                 "第 ${engine.pageIndex + 1}/${engine.pageCount} 页",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Row {
-                TextButton(
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // 箭头改图标按钮：纯文字 "‹" 在 360dp 屏上窄得像标点，点不准
+                IconButton(
                     onClick = { vm.switchEditorPage(engine.pageIndex - 1) },
                     enabled = engine.pageIndex > 0,
-                ) { Text("‹") }
-                TextButton(
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "上一页",
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                IconButton(
                     onClick = { vm.switchEditorPage(engine.pageIndex + 1) },
                     enabled = engine.pageIndex < engine.pageCount - 1,
-                ) { Text("›") }
-                TextButton(onClick = { vm.addEditorPage(false) }) { Text("+ 新页") }
-                TextButton(onClick = { vm.addEditorPage(true) }) { Text("复制当前页") }
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "下一页",
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                TextButton(
+                    onClick = { vm.addEditorPage(false) },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) { Text("+ 新页", style = MaterialTheme.typography.labelMedium) }
+                TextButton(
+                    onClick = { vm.addEditorPage(true) },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) { Text("复制", style = MaterialTheme.typography.labelMedium) }
                 TextButton(
                     onClick = { vm.removeEditorPage(engine.pageIndex) },
                     enabled = engine.pageCount > 1,
-                ) { Text("删本页") }
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) { Text("删除", style = MaterialTheme.typography.labelMedium) }
             }
         }
-
-        // 工具行
+        // 工具行：色板入口 + 四个工具；显示开关单独一行，避免 360dp 宽度下被裁掉
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = Spacing.md),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(
-                            Color(palette.colors[vm.editorColor].argb),
-                            RoundedCornerShape(10.dp),
-                        )
-                        .border(2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
-                        .clickable { showPaletteSheet = true },
-                )
-                EditorToolButton(Icons.Filled.Brush, "画笔", vm.editorTool == EditorTool.PAINT) {
-                    vm.editorTool = EditorTool.PAINT
-                }
-                EditorToolButton(Icons.Filled.FormatPaint, "油漆桶", vm.editorTool == EditorTool.FILL) {
-                    vm.editorTool = EditorTool.FILL
-                }
-                EditorToolButton(Icons.Filled.FormatColorReset, "橡皮", vm.editorTool == EditorTool.ERASE) {
-                    vm.editorTool = EditorTool.ERASE
-                }
-                EditorToolButton(Icons.Filled.Colorize, "吸管", vm.editorTool == EditorTool.PICKER) {
-                    vm.editorTool = EditorTool.PICKER
-                }
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(
+                        Color(palette.colors[vm.editorColor].argb),
+                        RoundedCornerShape(10.dp),
+                    )
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+                    .clickable { showPaletteSheet = true },
+            )
+            EditorToolButton(Icons.Filled.Brush, "画笔", vm.editorTool == EditorTool.PAINT) {
+                vm.editorTool = EditorTool.PAINT
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("色号", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = vm.editorShowCodes,
-                    onCheckedChange = { vm.editorShowCodes = it },
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
-                Text("网格", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = vm.editorShowGrid,
-                    onCheckedChange = { vm.editorShowGrid = it },
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
+            EditorToolButton(Icons.Filled.FormatPaint, "油漆桶", vm.editorTool == EditorTool.FILL) {
+                vm.editorTool = EditorTool.FILL
             }
+            EditorToolButton(Icons.Filled.FormatColorReset, "橡皮", vm.editorTool == EditorTool.ERASE) {
+                vm.editorTool = EditorTool.ERASE
+            }
+            EditorToolButton(Icons.Filled.Colorize, "吸管", vm.editorTool == EditorTool.PICKER) {
+                vm.editorTool = EditorTool.PICKER
+            }
+            Text(
+                "点格子改色 · 长按取色",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.md, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ShChip(
+                text = "色号",
+                selected = vm.editorShowCodes,
+                onClick = { vm.editorShowCodes = !vm.editorShowCodes },
+            )
+            ShChip(
+                text = "网格",
+                selected = vm.editorShowGrid,
+                onClick = { vm.editorShowGrid = !vm.editorShowGrid },
+            )
         }
     }
 
@@ -560,11 +609,29 @@ private fun EditorToolButton(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    IconButton(onClick = onClick) {
+    // 选中态用主色实底方块（shadcn toggle 语义），未选中走浅灰底 + 发丝描边，
+    // 否则四个工具里只有一个有边界，其它三个看着像悬浮图标。40dp 触控区。
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surfaceVariant,
+            )
+            .border(
+                1.dp,
+                if (selected) Color.Transparent else MaterialTheme.colorScheme.outline,
+                RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
         Icon(
             icon,
             contentDescription = label,
-            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
         )
     }
 }

@@ -78,7 +78,7 @@ class ExportRendererTest {
             ExportRenderer.RenderOptions(cellPx = 16, showCodes = false, showGrid = false),
         )
         // 空格保持背景色
-        assertEquals(0xFFFFFAF0.toInt(), bmp.pixels[0])
+        assertEquals(0xFFFAFAFA.toInt(), bmp.pixels[0])
         assertEquals(0xFFFF0000.toInt(), bmp.pixels[16])
     }
 
