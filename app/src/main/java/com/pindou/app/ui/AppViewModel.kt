@@ -509,13 +509,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     if (gain > 0) " · 比原参数高 $gain 分" else ""
                 genState = GenState.Done(best.result)
                 saveAfterGenerate(best.result)
-                withContext(Dispatchers.Main) { screen = Screen.PREVIEW }
+                // 停在参数页：逐档得分和结论要给人看见，自动跳预览等于把
+                // 刚算出来的对比信息扔掉。看完由用户点"查看图纸"进预览。
             } catch (e: Exception) {
                 genState = GenState.Error(e.message ?: "自动优选失败")
             } finally {
                 autoTuneRunning = false
             }
         }
+    }
+
+    /** 自动优选跑完但还没进预览时，用这个入口看结果（不重算、不清得分） */
+    fun openPreview() {
+        if (genState is GenState.Done) screen = Screen.PREVIEW
     }
 
     fun backToHome() {

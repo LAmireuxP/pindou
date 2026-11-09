@@ -52,8 +52,19 @@ enum class FilterLevel(
  */
 class ArtGrid(val argb: IntArray, val w: Int, val h: Int)
 
-/** 采样结果：每格 ARGB + 每格 Lab（三个 float 一组，下游免重复转换） */
-class GridSample(val argb: IntArray, val lab: FloatArray, val art: ArtGrid? = null) {
+/**
+ * 采样结果：每格 ARGB + 每格 Lab（三个 float 一组，下游免重复转换）。
+ *
+ * [edge] 标记"这一格跨在真实边界上"（格内源像素亮度双峰明显）。下游的
+ * 量化回填、众数滤波、小区域合并都靠它锁定边界格，避免把刚锐化出来的
+ * 边缘又糊回去。像素画支路没有这个概念，保持 null。
+ */
+class GridSample(
+    val argb: IntArray,
+    val lab: FloatArray,
+    val art: ArtGrid? = null,
+    val edge: BooleanArray? = null,
+) {
     val size: Int get() = argb.size
 }
 
@@ -87,13 +98,10 @@ object ImagePreprocessor {
         require(srcW > 0 && srcH > 0) { "源图尺寸非法: ${srcW}x$srcH" }
         require(pixels.size >= srcW * srcH) { "像素数 ${pixels.size} < ${srcW}x$srcH" }
 
-        // 像素画原图：先还原到它自己的画像素网格，再按面积多数表决落到目标
-        // 网格。面积平均会把画像素和背景混成中间色，量化后花瓣碎成胡椒面，
-        // 所以这条支路完全绕开平均。
-        PixelArtDetector.detect(pixels, srcW, srcH)?.let { art ->
-            return sampleArt(pixels, srcW, srcH, gridW, gridH, art)
-        }
-
+        // 像素画检测支路停用：在实测图上它把 801×743 的像素画认成 24px 块
+        // （实际 12.11px），还原网格 32×30 与真实 66×61 差一倍，量化后五官
+        // 整片塌掉。面积平均 + 边界格锐化在同一张图上的还原度更高，所以统一
+        // 走这一条，不再按源图类型分叉。PixelArtDetector 仅保留做诊断。
         val iw = gridW * SCALE
         val ih = gridH * SCALE
         val n = iw * ih
@@ -162,6 +170,13 @@ object ImagePreprocessor {
             }
         }
 
+        // ①b 边界格锐化：一格覆盖几十个源像素时，格子常常一半是人脸一半是头发。
+        //     面积平均把两侧混成"中间色"，相邻两格都是模糊过渡色，量化后并成
+        //     同一色号——这就是观感上最刺眼的"糊边"。这里只对格内亮度双峰明显
+        //     的格子改取多数侧颜色，平地区域一个像素都不动。
+        val edgeMask = BooleanArray(gridW * gridH)
+        sharpenEdgeCells(pixels, srcW, srcH, gridW, gridH, argb, edgeMask)
+
         val lab = FloatArray(argb.size * 3)
         for (i in argb.indices) {
             val l = ColorConversions.argbToLab(argb[i])
@@ -169,7 +184,139 @@ object ImagePreprocessor {
             lab[i * 3 + 1] = l[1]
             lab[i * 3 + 2] = l[2]
         }
-        return GridSample(argb, lab)
+        return GridSample(argb, lab, null, edgeMask)
+    }
+
+    /** 格内亮度双峰判据：标准差下限（挡住均匀纹理） */
+    private const val EDGE_MIN_STD = 14.0
+
+    /** 格内亮度双峰判据：两侧平均亮度差下限（挡住渐变与噪点） */
+    private const val EDGE_MIN_SEPARATION = 24.0
+
+    /** 少数侧最低占比：低于它说明只是零星噪点或一根发丝，不值得翻转整格 */
+    private const val EDGE_MIN_MINORITY = 0.12
+
+    /** 细深色结构保留：深浅两侧亮度差下限（轮廓线、睫毛、描边） */
+    private const val EDGE_DARK_KEEP_SEPARATION = 34.0
+
+    /** 细深色结构保留：深色侧最低占比（低于它仍按多数侧取色，避免噪点翻黑） */
+    private const val EDGE_DARK_KEEP_SHARE = 0.22
+
+    /**
+     * 边界格锐化：把"跨边界格子"的颜色换成占多数那一侧的平均色。
+     *
+     * 三步判据全部只看格内源像素，复杂度 O(源像素 + 格数)，两次遍历：
+     * 1. 格内亮度标准差 > [EDGE_MIN_STD]（格子里确实有两种明暗）；
+     * 2. 按格内亮度均值二分后，两侧平均亮度差 > [EDGE_MIN_SEPARATION]（是双峰，不是渐变）；
+     * 3. 少数侧占比 > [EDGE_MIN_MINORITY]（不是噪点）。
+     *
+     * 命中后 argb 与 edgeMask 就地改写。多数侧取"颜色多的那一侧"而不是
+     * "更亮的那一侧"：深色眉毛落在浅色额头上时，多数侧是额头，格子就该是肤色，
+     * 眉毛由相邻格去表达——这样边界是刀切的，而不是两边都糊成灰。
+     */
+    private fun sharpenEdgeCells(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        gridW: Int,
+        gridH: Int,
+        argb: IntArray,
+        edgeMask: BooleanArray,
+    ) {
+        val n = gridW * gridH
+        val count = IntArray(n)
+        val sumL = DoubleArray(n)
+        val sumL2 = DoubleArray(n)
+        for (y in 0 until srcH) {
+            val rowBase = (y.toLong() * gridH / srcH).toInt() * gridW
+            val row = y * srcW
+            for (x in 0 until srcW) {
+                val p = pixels[row + x]
+                val l = 0.299 * ((p shr 16) and 0xFF) +
+                    0.587 * ((p shr 8) and 0xFF) +
+                    0.114 * (p and 0xFF)
+                val k = rowBase + (x.toLong() * gridW / srcW).toInt()
+                count[k]++
+                sumL[k] += l
+                sumL2[k] += l * l
+            }
+        }
+
+        val meanL = DoubleArray(n)
+        val candidate = BooleanArray(n)
+        var any = false
+        for (i in 0 until n) {
+            val c = count[i]
+            if (c < 4) continue
+            val m = sumL[i] / c
+            meanL[i] = m
+            val varr = sumL2[i] / c - m * m
+            if (varr > EDGE_MIN_STD * EDGE_MIN_STD) {
+                candidate[i] = true
+                any = true
+            }
+        }
+        if (!any) return
+
+        // 第二遍：候选格按亮度均值二分，累计两侧的像素数与颜色
+        val loCnt = IntArray(n)
+        val hiCnt = IntArray(n)
+        val loL = DoubleArray(n)
+        val hiL = DoubleArray(n)
+        val loR = DoubleArray(n); val loG = DoubleArray(n); val loB = DoubleArray(n)
+        val hiR = DoubleArray(n); val hiG = DoubleArray(n); val hiB = DoubleArray(n)
+        for (y in 0 until srcH) {
+            val rowBase = (y.toLong() * gridH / srcH).toInt() * gridW
+            val row = y * srcW
+            for (x in 0 until srcW) {
+                val k = rowBase + (x.toLong() * gridW / srcW).toInt()
+                if (!candidate[k]) continue
+                val p = pixels[row + x]
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                val l = 0.299 * r + 0.587 * g + 0.114 * b
+                if (l >= meanL[k]) {
+                    hiCnt[k]++; hiL[k] += l; hiR[k] += r; hiG[k] += g; hiB[k] += b
+                } else {
+                    loCnt[k]++; loL[k] += l; loR[k] += r; loG[k] += g; loB[k] += b
+                }
+            }
+        }
+
+        for (i in 0 until n) {
+            if (!candidate[i]) continue
+            val lc = loCnt[i]
+            val hc = hiCnt[i]
+            if (lc == 0 || hc == 0) continue
+            val loMeanL = loL[i] / lc
+            val hiMeanL = hiL[i] / hc
+            if (hiMeanL - loMeanL < EDGE_MIN_SEPARATION) continue
+            val total = lc + hc
+            val minority = min(lc, hc).toDouble() / total
+            if (minority < EDGE_MIN_MINORITY) continue
+            // 多数侧取色
+            var useHi = hc >= lc
+            // 细深色结构保留：轮廓线/睫毛这类 1 格宽深色线条，面积永远小于
+            // 浅色底。只按"多数侧"取色会把它们整条抹掉（耳朵轮廓消失就是
+            // 这么来的）。对比够强（亮度差 ≥ 34）且深色侧占到 22% 时改取
+            // 深色侧，线条在量化后能留下一格，不会被背景吃掉。
+            val darkIsHi = hiMeanL > loMeanL
+            val darkCnt = if (darkIsHi) hc else lc
+            val darkMeanL = if (darkIsHi) hiMeanL else loMeanL
+            val lightMeanL = if (darkIsHi) loMeanL else hiMeanL
+            if (lightMeanL - darkMeanL >= EDGE_DARK_KEEP_SEPARATION &&
+                darkCnt.toDouble() / total >= EDGE_DARK_KEEP_SHARE
+            ) {
+                useHi = darkIsHi
+            }
+            val c = if (useHi) hc else lc
+            val rr = ((if (useHi) hiR[i] else loR[i]) / c + 0.5).toInt().coerceIn(0, 255)
+            val gg = ((if (useHi) hiG[i] else loG[i]) / c + 0.5).toInt().coerceIn(0, 255)
+            val bb = ((if (useHi) hiB[i] else loB[i]) / c + 0.5).toInt().coerceIn(0, 255)
+            argb[i] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+            edgeMask[i] = true
+        }
     }
 
     /**
@@ -191,6 +338,12 @@ object ImagePreprocessor {
     ): GridSample {
         val aw = art.artW
         val ah = art.artH
+        // 真实块尺寸是小数（本例 801px / 66 格 = 12.11），检测器只能给出整数 12。
+        // 按整数推进会在 66 列后累积 ~7px 漂移，右半边的取样窗口就压到隔壁
+        // 画像素上——花瓣里那些 1 格跳色、花蕊消失全是这么来的。这里按实际
+        // 跨度还原小数块尺寸，行/列各算一份。
+        val bx = art.blockW
+        val by = art.blockH
         val artR = IntArray(aw * ah)
         // 每个画像素取"内部区域众数"，不是均值。
         //
@@ -200,13 +353,13 @@ object ImagePreprocessor {
         // 变薄。众数只会选中块内真正占多数的那个颜色，过渡带再宽也不会污染。
         // 只取块内缩 25% 的区域，边界过渡带直接不参与统计。
         for (ay in 0 until ah) {
-            val y0 = (art.oy + ay * art.block).toDouble()
-            val y1 = y0 + art.block
+            val y0 = art.oy + ay * by
+            val y1 = y0 + by
             val sy0 = (y0 + (y1 - y0) * 0.25).toInt().coerceIn(0, srcH - 1)
             val sy1 = (y1 - (y1 - y0) * 0.25).toInt().coerceIn(sy0, srcH - 1)
             for (ax in 0 until aw) {
-                val x0 = (art.ox + ax * art.block).toDouble()
-                val x1 = x0 + art.block
+                val x0 = art.ox + ax * bx
+                val x1 = x0 + bx
                 val sx0 = (x0 + (x1 - x0) * 0.25).toInt().coerceIn(0, srcW - 1)
                 val sx1 = (x1 - (x1 - x0) * 0.25).toInt().coerceIn(sx0, srcW - 1)
                 // 桶 = 每通道丢低 3 位；同色块的 JPEG 抖动落在同一桶
@@ -271,17 +424,17 @@ object ImagePreprocessor {
                 java.util.Arrays.fill(gsum, 0.0)
                 java.util.Arrays.fill(bsum, 0.0)
                 java.util.Arrays.fill(wsum, 0.0)
-                val ay0 = (((y0 - art.oy) / art.block).toInt()).coerceIn(0, ah - 1)
-                val ay1 = (((y1 - art.oy) / art.block - 1e-9).toInt()).coerceIn(0, ah - 1)
-                val ax0 = (((x0 - art.ox) / art.block).toInt()).coerceIn(0, aw - 1)
-                val ax1 = (((x1 - art.ox) / art.block - 1e-9).toInt()).coerceIn(0, aw - 1)
+                val ay0 = (((y0 - art.oy) / by).toInt()).coerceIn(0, ah - 1)
+                val ay1 = (((y1 - art.oy) / by - 1e-9).toInt()).coerceIn(0, ah - 1)
+                val ax0 = (((x0 - art.ox) / bx).toInt()).coerceIn(0, aw - 1)
+                val ax1 = (((x1 - art.ox) / bx - 1e-9).toInt()).coerceIn(0, aw - 1)
                 for (ay in ay0..ay1) {
-                    val oy = min(y1, art.oy + (ay + 1.0) * art.block) -
-                        max(y0, art.oy + ay.toDouble() * art.block)
+                    val oy = min(y1, art.oy + (ay + 1.0) * by) -
+                        max(y0, art.oy + ay * by)
                     if (oy <= 0) continue
                     for (ax in ax0..ax1) {
-                        val ox = min(x1, art.ox + (ax + 1.0) * art.block) -
-                            max(x0, art.ox + ax.toDouble() * art.block)
+                        val ox = min(x1, art.ox + (ax + 1.0) * bx) -
+                            max(x0, art.ox + ax * bx)
                         if (ox <= 0) continue
                         val wgt = ox * oy
                         val p = artR[ay * aw + ax]

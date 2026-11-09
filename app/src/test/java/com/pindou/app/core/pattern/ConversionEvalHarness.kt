@@ -46,6 +46,31 @@ class ConversionEvalHarness {
             // 与颂拼豆同为"宽度档位、高度按比例"：78 宽对应原图高宽比
             val gridW = 78
             val gridH = (gridW.toDouble() * h / w).toInt().coerceIn(5, 200)
+            // 诊断：像素画检测结果 + 还原出的画像素网格，看噪声是检测问题还是采样问题
+            val artInfo = PixelArtDetector.detect(pixels, w, h)
+            if (artInfo != null) {
+                stats.appendLine("$name 像素画检测 block=${artInfo.blockW} art=${artInfo.artW}x${artInfo.artH} " +
+                    "off=${artInfo.ox},${artInfo.oy}")
+                if (name == "user_test") {
+                    val s = ImagePreprocessor.sample(pixels, w, h, gridW, gridH, FilterLevel.MEDIUM)
+                    val a = s.art
+                    if (a != null) {
+                        val px = 6
+                        val img = IntArray(a.w * px * a.h * px) { 0xFFFFFFFF.toInt() }
+                        for (yy in 0 until a.h) for (xx in 0 until a.w) {
+                            fillRect(img, a.w * px, xx * px, yy * px, px, px, a.argb[yy * a.w + xx])
+                        }
+                        writePng(File(outDir, "user_test_artgrid.png"), img, a.w * px, a.h * px)
+                        // 目标网格上的采样色（进入量化前），用来区分"采样噪声"和"量化噪声"
+                        val cell = 8
+                        val gi = IntArray(gridW * cell * gridH * cell) { 0xFFFFFFFF.toInt() }
+                        for (yy in 0 until gridH) for (xx in 0 until gridW) {
+                            fillRect(gi, gridW * cell, xx * cell, yy * cell, cell, cell, s.argb[yy * gridW + xx])
+                        }
+                        writePng(File(outDir, "user_test_sample.png"), gi, gridW * cell, gridH * cell)
+                    }
+                }
+            }
             val configs = FilterLevel.entries.map { lvl ->
                 lvl.label to GeneratorOptions(
                     gridW = gridW, gridH = gridH,

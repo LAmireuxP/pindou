@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 自测探针：debug 包用 ProbeApp 接管 Application，启动时带 probe=true extra 触发。
+         不用 instrumentation：这台机器上后台进程拉起 Activity 会被 BAL 拦，跑不通。 -->
+    <application android:name="com.pindou.app.ProbeApp" />
+</manifest>

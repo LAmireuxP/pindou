@@ -52,8 +52,14 @@ object QualityScorer {
     /** 输出侧"已经明显不同色"的 ΔE 下限 */
     private const val BROKEN_DE = 8.0
 
-    /** 原图侧"明确是边界"的 ΔE 下限 */
-    private const val EDGE_DE = 30.0
+    /**
+     * 原图侧"明确是边界"的 ΔE 下限。
+     *
+     * 30 只能抓到五官这种硬边，花瓣层次、裙摆褶皱这类 ΔE 18~28 的软边
+     * 全被漏掉——于是"限 20 色把整朵花糊成一块"在评分里不扣分，自动优选
+     * 反而偏向糊的档位。降到 18，软边也参与糊边统计。
+     */
+    private const val EDGE_DE = 18.0
 
     /** 输出侧"边界被抹平"的 ΔE 上限 */
     private const val FLATTENED_DE = 3.0
@@ -198,7 +204,9 @@ object QualityScorer {
      * 颜色：超出基准的均差系数 6.0（多偏 ΔE 3 扣 18），p90 系数 0.35（惩罚局部崩坏）。
      * 破碎：比例 × 2.0，满 25 分封顶——碎点是"拼到一半想放弃"的头号原因。
      * 糊边：比例 × 1.6，满 22 分封顶——糊边让五官消失，但比碎点稍可接受。
-     * 用色：超过 20 色每色 0.45 分，满 9 分封顶（按包买，色数直接影响成本）。
+     * 用色：20~34 色是拼豆常规区间，不扣分；超过 34 色每色 0.5 分，封顶 6。
+     * 早先按 20 色起扣，把"30 色、结构更准"的组合硬压 5 分，自动优选
+     * 于是永远落在糊一点但省豆的 20 色版本上——用户看到的就是"不像"。
      */
     private fun scoreOf(
         mean: Double,
@@ -210,7 +218,7 @@ object QualityScorer {
         val colorLoss = (mean * 6.0).coerceAtMost(35.0) + (p90 * 0.35).coerceAtMost(8.0)
         val breakLoss = (breakRate * 100.0 * 1.5).coerceAtMost(22.0)
         val flatLoss = (flattenRate * 100.0 * 0.55).coerceAtMost(18.0)
-        val paletteLoss = if (colorCount > 20) ((colorCount - 20) * 0.5).coerceAtMost(8.0) else 0.0
+        val paletteLoss = if (colorCount > 34) ((colorCount - 34) * 0.5).coerceAtMost(6.0) else 0.0
         return (100.0 - colorLoss - breakLoss - flatLoss - paletteLoss).roundToInt().coerceIn(0, 100)
     }
 }

@@ -89,6 +89,5 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
     debugImplementation(libs.compose.ui.tooling)
-
     testImplementation(libs.junit)
 }

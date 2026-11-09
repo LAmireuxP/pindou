@@ -103,6 +103,16 @@ object PatternGenerator {
             )
         }
 
+        // ②b 边界格并进保护掩码：采样阶段已经把跨边界的格子取成"多数侧原色"，
+        //     量化回填、众数滤波、小区域合并都必须放过它们，否则刚切出来的边
+        //     又会被邻域投票糊回去——这是高过滤档"糊边率"的主要来源。
+        val protect: BooleanArray? = if (detail == null) {
+            null
+        } else {
+            val edge = sample.edge
+            if (edge == null) detail else BooleanArray(detail.size) { detail[it] || edge[it] }
+        }
+
         // ③ 色卡映射：抖动走逐格误差扩散；默认走 Lab 聚类量化。
         //    量化先把整图归成 K 个色簇，同一片区域共享一个色号，这是
         //    "成块"的来源；抖动与聚类互斥，开了抖动就保留逐格语义。
@@ -125,7 +135,7 @@ object PatternGenerator {
             onStage(GenerationStage.MAP, 0f)
             mapped = LabQuantizer.quantize(
                 sample, options.gridW, options.gridH, palette,
-                options.filterLevel.clusterK, options.excludedCodes, detail,
+                options.filterLevel.clusterK, options.excludedCodes, protect,
             )
             onStage(GenerationStage.MAP, 1f)
         }
@@ -147,7 +157,7 @@ object PatternGenerator {
         onStage(GenerationStage.CLEAN, 0f)
         var cleaned = ImagePreprocessor.modeFilter(
             cells, options.gridW, options.gridH, palette.colors.size,
-            if (art != null) 0 else options.filterLevel.modePasses, detail,
+            if (art != null) 0 else options.filterLevel.modePasses, protect,
         )
 
         // ⑤ 小区域合并：面积占比低于档位阈值的同色连通块并入最大邻块，
@@ -159,7 +169,7 @@ object PatternGenerator {
             val minArea = options.regionMinArea ?: autoMin
             cleaned = RegionCleaner.cleanMasked(
                 cleaned, options.gridW, options.gridH, minArea,
-                palette.colors.map { it.argb }, detail,
+                palette.colors.map { it.argb }, protect,
                 options.filterLevel.regionKeepDeltaE,
             )
         }

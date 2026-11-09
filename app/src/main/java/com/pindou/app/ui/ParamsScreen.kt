@@ -475,8 +475,14 @@ fun ParamsScreen(vm: AppViewModel) {
             }
             Button(
                 onClick = {
-                    val text = vm.textSource
-                    if (text != null) vm.regenerateFromText(text) else vm.generate()
+                    // 自动优选结果已经在手上：直接进预览，不要重算一遍把
+                    // 刚展示的逐档得分清空
+                    if (vm.autoTuneInfo != null && vm.genState is GenState.Done) {
+                        vm.openPreview()
+                    } else {
+                        val text = vm.textSource
+                        if (text != null) vm.regenerateFromText(text) else vm.generate()
+                    }
                 },
                 enabled = ready && idle,
                 modifier = Modifier
@@ -490,7 +496,10 @@ fun ParamsScreen(vm: AppViewModel) {
                         color = MaterialTheme.colorScheme.onPrimary,
                     )
                 }
-                Text("生成图纸", modifier = Modifier.padding(start = 8.dp))
+                Text(
+                    if (vm.autoTuneInfo != null && vm.genState is GenState.Done) "查看图纸" else "生成图纸",
+                    modifier = Modifier.padding(start = 8.dp),
+                )
             }
         }
     }

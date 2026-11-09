@@ -263,9 +263,10 @@ private fun CropOverlay(
     val currentGuides by rememberUpdatedState(guides)
     val currentGridW by rememberUpdatedState(gridW)
     val currentGridH by rememberUpdatedState(gridH)
-    // 命中半径：角柄 44dp（Material 最小触控目标），边柄 20dp（边只留中段，避免与角柄抢）
-    val cornerHitR = with(LocalDensity.current) { 44.dp.toPx() }
-    val edgeHitR = with(LocalDensity.current) { 20.dp.toPx() }
+    // 命中半径：角柄 56dp、边柄 28dp。44dp 是 Material 的下限，但手指实际
+    // 落点在 50dp 以上才稳；边柄跟着放大，靠内段的移动手势仍然保留。
+    val cornerHitR = with(LocalDensity.current) { 56.dp.toPx() }
+    val edgeHitR = with(LocalDensity.current) { 28.dp.toPx() }
     var drag by remember { mutableStateOf<CropDrag?>(null) }
 
     Canvas(
@@ -387,7 +388,7 @@ private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, guides: CropGuide
     drawRect(Color.White.copy(alpha = 0.9f), Offset(cl, ct), Size(w, h), style = Stroke(5.dp.toPx()))
     drawRect(ClayColors.Primary, Offset(cl, ct), Size(w, h), style = Stroke(2.dp.toPx()))
     // 角柄：L 形括弧（拖拽语义清晰、视觉面积大）
-    val arm = 22.dp.toPx()
+    val arm = 26.dp.toPx()
     val bracket = listOf(
         // 左上
         Offset(cl, ct) to Offset(cl + arm, ct),
@@ -403,18 +404,18 @@ private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, guides: CropGuide
         Offset(cr, cb) to Offset(cr, cb - arm),
     )
     // 先画一层白色粗线作对比垫底，再叠主色，避免角柄在浅色背景里消失
-    bracket.forEach { (a, b) -> drawLine(Color.White, a, b, 9.dp.toPx(), cap = StrokeCap.Round) }
-    bracket.forEach { (a, b) -> drawLine(ClayColors.Primary, a, b, 5.dp.toPx(), cap = StrokeCap.Round) }
+    bracket.forEach { (a, b) -> drawLine(Color.White, a, b, 11.dp.toPx(), cap = StrokeCap.Round) }
+    bracket.forEach { (a, b) -> drawLine(ClayColors.Primary, a, b, 6.dp.toPx(), cap = StrokeCap.Round) }
     // 边柄：四边中点短条（视觉比圆点更明显，命中区仍是整条边中段）
-    val barLen = 26.dp.toPx()
+    val barLen = 34.dp.toPx()
     val bars = listOf(
         Offset(cl, (ct + cb) / 2f - barLen / 2f) to Offset(cl, (ct + cb) / 2f + barLen / 2f),
         Offset(cr, (ct + cb) / 2f - barLen / 2f) to Offset(cr, (ct + cb) / 2f + barLen / 2f),
         Offset((cl + cr) / 2f - barLen / 2f, ct) to Offset((cl + cr) / 2f + barLen / 2f, ct),
         Offset((cl + cr) / 2f - barLen / 2f, cb) to Offset((cl + cr) / 2f + barLen / 2f, cb),
     )
-    bars.forEach { (a, b) -> drawLine(Color.White, a, b, 11.dp.toPx(), cap = StrokeCap.Round) }
-    bars.forEach { (a, b) -> drawLine(ClayColors.Primary, a, b, 6.dp.toPx(), cap = StrokeCap.Round) }
+    bars.forEach { (a, b) -> drawLine(Color.White, a, b, 13.dp.toPx(), cap = StrokeCap.Round) }
+    bars.forEach { (a, b) -> drawLine(ClayColors.Primary, a, b, 7.dp.toPx(), cap = StrokeCap.Round) }
 }
 
 /** 拖一条边：自由模式只动该边；锁定比例时另一轴联动并保持原中心 */

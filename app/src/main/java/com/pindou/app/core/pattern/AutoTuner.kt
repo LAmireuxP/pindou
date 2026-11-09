@@ -57,18 +57,23 @@ object AutoTuner {
             candidates += Candidate(level, colors, result)
         }
 
-        // 同分时优先少用色：分数一样但少 5 色，拼起来更省
+        // 同分时优先色多的一版：同分说明观感指标打平，色多那版的结构细节
+        // 更完整（花瓣层次、轮廓拐角），20 色那版是"糊平"换来的低碎点。
         val best = candidates.maxWithOrNull(
             compareBy<Candidate> { it.score }
-                .thenByDescending { it.result.quality.colorCount },
+                .thenBy { it.result.quality.colorCount },
         ) ?: return null
         return Outcome(best, candidates)
     }
 
     /**
-     * 默认候选：四个过滤档 + （未限色时）一个 20 色档。
+     * 默认候选：四个过滤档 × 三档色数（20 / 30 / 不限）。
+     *
+     * 只给 20 色时，评分里的碎点项永远偏向"糊成一块"的组合，花瓣层次会被
+     * 合并掉；加 30 色档给细腻版本一个进候选的机会。12 组在 78×72 上约
+     * 6~9 秒，仍在可等范围内。
      * 已限色时只比档位，避免把用户明确设定的色数上限改掉。
      */
     fun defaultColorOptions(base: GeneratorOptions): List<Int?> =
-        if (base.maxColors != null) listOf(base.maxColors) else listOf(null, 20)
+        if (base.maxColors != null) listOf(base.maxColors) else listOf(null, 20, 30)
 }

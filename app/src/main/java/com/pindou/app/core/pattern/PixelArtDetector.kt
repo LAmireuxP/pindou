@@ -40,7 +40,14 @@ object PixelArtDetector {
      * @param ox/oy 画像素网格相对源图左上角的偏移。放大过的像素画常带白边或
      *              半格错位，不校正偏移会让每一格都压在块边界上。
      */
-    data class Result(val block: Int, val artW: Int, val artH: Int, val ox: Int, val oy: Int)
+    data class Result(
+        val blockW: Double,
+        val blockH: Double,
+        val artW: Int,
+        val artH: Int,
+        val ox: Int,
+        val oy: Int,
+    )
 
     fun detect(pixels: IntArray, srcW: Int, srcH: Int): Result? {
         if (srcW < 32 || srcH < 32) return null
@@ -56,93 +63,123 @@ object PixelArtDetector {
         val diff = abs(bx - by).toDouble() / max(bx, by)
         if (diff > AXIS_TOLERANCE) return null
         val hint = ((bx + by) / 2.0).roundToInt().coerceIn(MIN_BLOCK, MAX_BLOCK)
-        // 直方图峰值只是"块内平坦段"的长度：块与块之间的过渡带（缩放/JPEG
-        // 造成的 2~4px 斜坡）不计入 run，所以峰值系统性地偏小——本例真实
-        // 块长 11.8px，峰值落在 9。用"块内纯度"把真实块长找回来：格子正好
-        // 落在一个画像素里时，块内众数占比 ≈ 0.9；跨到边界时掉到 0.6 以下。
-        var bestBlock = hint
+        // 直方图峰值只是"块内平坦段"的长度：过渡带不计入 run，峰值系统性偏小。
+        // 早先靠"块内纯度"回收真实块长，但软过渡下纯度对相位不敏感——72 种
+        // 相位里最高与最低只差 2%，选出来的 ox 常常整块错位，取样窗口压在
+        // 块边界上，花瓣里就全是 1 格跳色。
+        //
+        // 改用"边界梯度对齐"：块边界在源图上是阶跃，把每一列（行）的相邻
+        // 像素差加起来得到梯度曲线，真实的 b 与偏移会让 ox+k·b 全部落在这条
+        // 曲线的尖峰上。块长按 0.01px 搜索，相位按 0.5px 搜索——缩放后的
+        // 块长本来就不是整数（本例 12.11），用整数永远对不齐。
+        val gx = gradientProfile(pixels, srcW, srcH, horizontal = true)
+        val gy = gradientProfile(pixels, srcW, srcH, horizontal = false)
+        // 画像素是正方形：横竖两条曲线必须用**同一个**块长评分，否则 8px 的
+        // 花纹周期会在一边胜出、12px 的真块长在另一边胜出，取平均就得到
+        // 98×61 这种比例都不对的网格。
+        var bestScore = Double.NEGATIVE_INFINITY
+        var bestBlock = hint.toDouble()
         var bestOx = 0
         var bestOy = 0
-        var bestScore = -1.0
-        for (b in hint..(hint + 8)) {
-            if (b > MAX_BLOCK) break
-            for (ox in 0 until min(b, 7) step 2) {
-                for (oy in 0 until min(b, 7) step 2) {
-                    val score = gridPurity(pixels, srcW, srcH, b, ox, oy)
-                    if (score > bestScore) {
-                        bestScore = score
-                        bestBlock = b
-                        bestOx = ox
-                        bestOy = oy
-                    }
-                }
+        var b = MIN_BLOCK.toDouble()
+        while (b <= MAX_BLOCK) {
+            val sx = bestOffset(gx, b)
+            val sy = bestOffset(gy, b)
+            // 两轴同时对齐才算真网格；取较小值做惩罚，单轴命中不算数。
+            // 只接受"明显更好（>5%）"的解：2b、3b 这些谐波与原块长得分相等，
+            // 按升序搜索时保留先到的 b，才不会把 12px 的块认成 24px。
+            val score = min(sx.second, sy.second)
+            if (bestScore == Double.NEGATIVE_INFINITY || score > bestScore + abs(bestScore) * 0.05) {
+                bestScore = score
+                bestBlock = b
+                bestOx = sx.first
+                bestOy = sy.first
             }
+            b += 0.02
         }
-        // 偏移精修到 1px
-        for (dx in -1..1) for (dy in -1..1) {
-            val ox = (bestOx + dx).coerceAtLeast(0)
-            val oy = (bestOy + dy).coerceAtLeast(0)
-            val score = gridPurity(pixels, srcW, srcH, bestBlock, ox, oy)
-            if (score > bestScore) { bestScore = score; bestOx = ox; bestOy = oy }
-        }
-        val artW = (srcW - bestOx) / bestBlock
-        val artH = (srcH - bestOy) / bestBlock
+        if (bestScore == Double.NEGATIVE_INFINITY) return null
+        val bestBlockW = bestBlock
+        val bestBlockH = bestBlock
+        val artW = ((srcW - bestOx) / bestBlockW).toInt()
+        val artH = ((srcH - bestOy) / bestBlockH).toInt()
         if (artW < 8 || artH < 8) return null
-        return Result(bestBlock, artW, artH, bestOx, bestOy)
+        return Result(bestBlockW, bestBlockH, artW, artH, bestOx, bestOy)
     }
 
+    /** 梯度曲线抽样行/列上限：200 条足够让尖峰稳定，耗时与图片高度解耦 */
+    private const val GRADIENT_LINES = 200
+
     /**
-     * 网格纯度：抽样 [SAMPLE_CELLS] 个格子，统计"格内最多的那个颜色"
-     * 占该格像素的比例，取平均。格子与画像素对齐度越高，这个值越接近 1。
+     * 边界梯度曲线：`out[i]` = 第 i 列（行）与前一列（行）的三通道差之和。
+     * 像素画的块边界在这里是一串等距尖峰，照片是平坦噪声。
      *
-     * 只取格内缩 20% 的区域，边界过渡带本来就不该参与。
+     * 用 RGB 三通道差而不是亮度差：浅粉和淡黄亮度几乎一样，按亮度算
+     * 这条边界就是"看不见"的，网格会锁到 2 倍块长上（24px 而不是 12px）。
      */
-    private fun gridPurity(
+    private fun gradientProfile(
         pixels: IntArray,
         srcW: Int,
         srcH: Int,
-        block: Int,
-        ox: Int,
-        oy: Int,
-    ): Double {
-        val aw = (srcW - ox) / block
-        val ah = (srcH - oy) / block
-        if (aw < 8 || ah < 8) return -1.0
-        val total = aw * ah
-        val step = max(1, total / SAMPLE_CELLS)
-        var sum = 0.0
-        var used = 0
-        var idx = 0
-        while (idx < total) {
-            val ax = idx % aw
-            val ay = idx / aw
-            idx += step
-            val x0 = (ox + ax * block).toDouble()
-            val x1 = x0 + block
-            val y0 = (oy + ay * block).toDouble()
-            val y1 = y0 + block
-            val sx0 = (x0 + (x1 - x0) * 0.2).toInt().coerceIn(0, srcW - 1)
-            val sx1 = (x1 - (x1 - x0) * 0.2).toInt().coerceIn(sx0, srcW - 1)
-            val sy0 = (y0 + (y1 - y0) * 0.2).toInt().coerceIn(0, srcH - 1)
-            val sy1 = (y1 - (y1 - y0) * 0.2).toInt().coerceIn(sy0, srcH - 1)
-            val hist = HashMap<Int, Int>()
-            var n = 0
-            for (y in sy0..sy1) {
-                for (x in sx0..sx1) {
-                    val p = pixels[y * srcW + x] and 0xF0F0F0
-                    hist.merge(p, 1, Int::plus)
-                    n++
-                }
+        horizontal: Boolean,
+    ): DoubleArray {
+        val len = if (horizontal) srcW else srcH
+        val lines = if (horizontal) srcH else srcW
+        val out = DoubleArray(len)
+        val lineStep = max(1, lines / GRADIENT_LINES)
+        var line = 0
+        while (line < lines) {
+            var prev = pixels[if (horizontal) line * srcW else line]
+            var i = 1
+            while (i < len) {
+                val cur = if (horizontal) pixels[line * srcW + i] else pixels[i * srcW + line]
+                out[i] += abs((cur shr 16 and 0xFF) - (prev shr 16 and 0xFF)) +
+                    abs((cur shr 8 and 0xFF) - (prev shr 8 and 0xFF)) +
+                    abs((cur and 0xFF) - (prev and 0xFF))
+                prev = cur
+                i++
             }
-            if (n == 0) continue
-            sum += (hist.values.maxOrNull() ?: 0).toDouble() / n
-            used++
+            line += lineStep
         }
-        return if (used == 0) 0.0 else sum / used
+        return out
     }
 
-    /** 纯度评估的抽样格数：再多也只是让结果更稳，200 个已足够区分档位 */
-    private const val SAMPLE_CELLS = 240
+    /**
+     * 固定块长 [b]，在相位 0..b（步长 0.5）里找边界梯度均值最大的偏移。
+     * 目标值减去整体均值，避免"采样点越多分越高"的偏好。
+     */
+    private fun bestOffset(profile: DoubleArray, b: Double): Pair<Int, Double> {
+        val len = profile.size
+        if (len < 16) return 0 to Double.NEGATIVE_INFINITY
+        val baseline = profile.average()
+        var bestScore = Double.NEGATIVE_INFINITY
+        var bestOff = 0
+        var off = 0.0
+        while (off < b) {
+            var sum = 0.0
+            var cnt = 0
+            var k = 1
+            while (true) {
+                val pos = off + k * b
+                if (pos >= len - 1) break
+                // 线性插值：块长是小数（801/66），四舍五入到整数会让整条曲线
+                // 在 ±1px 上抖动，得分数值完全取决于取整运气。
+                val i0 = pos.toInt()
+                val f = pos - i0
+                sum += profile[i0] * (1 - f) + profile[i0 + 1] * f - baseline
+                cnt++
+                k++
+            }
+            if (cnt >= 8) {
+                val score = sum / cnt
+                if (score > bestScore) {
+                    bestScore = score
+                    bestOff = off.roundToInt()
+                }
+            }
+            off += 0.5
+        }
+        return bestOff to bestScore
+    }
 
     /** 连续同色长度直方图；只按 [lineStep] 抽线，线内逐像素比较 */
     private fun runHistogram(

@@ -43,9 +43,9 @@ class AutoTunerTest {
     }
 
     @Test
-    fun `未限色时默认候选包含二十色档`() {
+    fun `未限色时默认候选包含二十与三十色档`() {
         val base = GeneratorOptions(gridW = 29, gridH = 29)
-        assertEquals(listOf<Int?>(null, 20), AutoTuner.defaultColorOptions(base))
+        assertEquals(listOf<Int?>(null, 20, 30), AutoTuner.defaultColorOptions(base))
     }
 
     @Test
