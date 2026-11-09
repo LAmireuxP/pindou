@@ -20,6 +20,7 @@ import com.pindou.app.core.data.ProjectEntity
 import com.pindou.app.core.data.ProjectRepository
 import com.pindou.app.core.data.SettingsStore
 import com.pindou.app.core.editor.EditorEngine
+import com.pindou.app.core.editor.ColorReplaceOps
 import com.pindou.app.core.editor.PaletteOps
 import com.pindou.app.core.image.CropRect
 import com.pindou.app.core.image.ImageTransforms
@@ -454,13 +455,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (screen != Screen.CROP || !cropPreviewEnabled) return
         val pixels = imagePixels ?: return
         val rect = cropRect ?: return
-        val palette = selectedPalette ?: return
         val token = ++cropPreviewToken
         cropPreviewJob?.cancel()
         cropPreviewJob = viewModelScope.launch(Dispatchers.Default) {
             try {
                 delay(160)
                 if (token != cropPreviewToken) return@launch
+                // 色卡是异步加载的：导入后立刻排预览时 selectedPalette 可能还是 null，
+                // 这里等一下加载完成再算，否则预览永远不出现（裁剪页只剩空网格）。
+                val loaded = ensurePalettes()
+                val palette = selectedPalette
+                    ?: loaded.firstOrNull { it.brand == "MARD" }
+                    ?: loaded.firstOrNull()
+                    ?: return@launch
                 cropPreviewRunning = true
                 val sub = ImageTransforms.crop(pixels, imageW, imageH, rect)
                 // 与最终生成完全同一套参数：预览色号 = 成品色号，
@@ -491,8 +498,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     colorCount = distinct.size,
                     elapsedMs = res.elapsedMs,
                 )
-            } catch (_: Exception) {
-                // 预览失败不打断裁剪；正式生成会重新报错
+            } catch (e: Exception) {
+                // 预览失败不打断裁剪；正式生成会重新报错。留日志便于定位静默失败。
+                android.util.Log.w("PindouCrop", "裁剪预览生成失败", e)
             } finally {
                 if (token == cropPreviewToken) cropPreviewRunning = false
             }
@@ -1245,33 +1253,99 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 合并相近色号（ΔE 阈值），整图替换并立即持久化 */
     fun mergeSimilarEditorColors(maxDeltaE: Double) {
+        mergeSimilarEditorColorsWithReport(maxDeltaE)
+    }
+
+    /**
+     * 全图合并相近色（ΔE 阈值），沿用编辑引擎的撤销栈：
+     * 合并后按一次撤销即可回到合并前，不丢编辑历史。
+     * 返回逐条「旧色 → 新色 · 格数」明细，UI 用于展示合并了什么。
+     */
+    fun mergeSimilarEditorColorsWithReport(maxDeltaE: Double): List<ColorReplaceOps.Move> {
+        val engine = editor ?: return emptyList()
+        val palette = selectedPalette ?: return emptyList()
+        val outcome = ColorReplaceOps.mergeSimilar(engine.pages, engine.locks, palette, maxDeltaE)
+        if (!outcome.changed) {
+            toast = "ΔE ≤ %.1f 没有可合并的相近色".format(maxDeltaE)
+            return emptyList()
+        }
+        if (!engine.applyPages(outcome.pages)) return emptyList()
+        syncEditorAfterColorOp()
+        persistEditorPages()
+        val usedBefore = engine.pages.flatMap { p -> p.filter { it >= 0 } }.distinct().size
+        toast = "已合并 ${outcome.moves.size} 组 · ${outcome.movedCells} 格（剩 $usedBefore 色）"
+        return outcome.moves
+    }
+
+    /**
+     * 替换相似色：[from] 及与它 ΔE ≤ [maxDeltaE] 的已用色统一替换为 [to]。
+     * maxDeltaE = 0 即只替换这一个色号。返回明细供 UI 展示。
+     */
+    fun replaceSimilarEditorColors(
+        from: Int,
+        to: Int,
+        maxDeltaE: Double,
+    ): List<ColorReplaceOps.Move> {
+        val engine = editor ?: return emptyList()
+        val palette = selectedPalette ?: return emptyList()
+        if (from == to) {
+            toast = "源色与目标色相同"
+            return emptyList()
+        }
+        val outcome = ColorReplaceOps.replaceSimilar(
+            engine.pages, engine.locks, palette, from, to, maxDeltaE,
+        )
+        if (!outcome.changed) {
+            toast = if (outcome.lockedSkipped > 0) {
+                "命中 ${outcome.lockedSkipped} 格，但都是锁定格"
+            } else {
+                "没有匹配的格子"
+            }
+            return emptyList()
+        }
+        if (!engine.applyPages(outcome.pages)) return emptyList()
+        syncEditorAfterColorOp()
+        persistEditorPages()
+        val target = palette.colors.getOrNull(to)?.code ?: "?"
+        toast = "已把 ${outcome.moves.size} 色 · ${outcome.movedCells} 格换成 $target"
+        return outcome.moves
+    }
+
+    /** 全局换色后同步 genState / projectPages，并刷新画布 */
+    private fun syncEditorAfterColorOp() {
         val engine = editor ?: return
         val current = (genState as? GenState.Done)?.result ?: return
-        val merged = PaletteOps.mergeSimilarCodes(engine.pages, current.palette, maxDeltaE)
-        editor = EditorEngine(engine.width, engine.height, merged, engine.locks, engine.pageIndex)
+        val pages = engine.pages.map { it.copyOf() }
+        projectPages = pages
         genState = GenState.Done(
-            PatternResult(engine.width, engine.height, merged[0], current.palette, current.elapsedMs),
+            current.copy(
+                width = engine.width,
+                height = engine.height,
+                cells = pages.first(),
+                palette = selectedPalette ?: current.palette,
+            ),
         )
-        projectPages = merged
-        val id = currentProjectId
-        if (id != null) {
-            viewModelScope.launch {
-                repository.updateCells(
-                    id = id,
-                    width = engine.width,
-                    height = engine.height,
-                    cells = merged.reduce { acc, cur -> acc + cur },
-                    locked = engine.locks.reduce { acc, cur -> acc + cur },
-                    palette = current.palette,
-                    pages = merged.size,
-                )
-            }
+        editorRevision++
+    }
+
+    /** 全局换色后立即落库（拷贝数组，避免协程执行时被继续编辑） */
+    private fun persistEditorPages() {
+        val engine = editor ?: return
+        val id = currentProjectId ?: return
+        val palette = selectedPalette ?: return
+        val pages = engine.pages.map { it.copyOf() }
+        val locks = engine.locks.map { it.copyOf() }
+        viewModelScope.launch {
+            repository.updateCells(
+                id = id,
+                width = engine.width,
+                height = engine.height,
+                cells = pages.reduce { acc, cur -> acc + cur },
+                locked = locks.reduce { acc, cur -> acc + cur },
+                palette = palette,
+                pages = pages.size,
+            )
         }
-        notifyEditorChanged()
-        val before = engine.pages.sumOf { p -> p.count { it >= 0 } }
-        val usedBefore = engine.pages.flatMap { p -> p.filter { it >= 0 } }.distinct().size
-        val usedAfter = merged.flatMap { p -> p.filter { it >= 0 } }.distinct().size
-        toast = "已合并相近色：$usedBefore 色 → $usedAfter 色（$before 格参与）"
     }
 
     // ---------- .bpat 导入导出 ----------

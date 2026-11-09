@@ -310,6 +310,30 @@ class EditorEngine(
         return true
     }
 
+    /**
+     * 用外部算好的新页数据整体替换（全局换色 / 合并相近色用）。
+     * 整次操作作为一条快照级撤销记录；尺寸必须与当前网格一致。
+     * 复杂度 O(格数) 拷贝 + 一次全页快照，200×200×多页仍在毫秒级。
+     */
+    fun applyPages(newPages: List<IntArray>): Boolean {
+        if (newPages.size != _pages.size) return false
+        newPages.forEach { require(it.size == width * height) { "页数据尺寸与网格不符" } }
+        var changed = false
+        for (p in _pages.indices) {
+            if (!_pages[p].contentEquals(newPages[p])) {
+                changed = true
+                break
+            }
+        }
+        if (!changed) return false
+        val beforePages = snapshotPages()
+        val beforeLocks = snapshotLocks()
+        val beforeIndex = pageIndex
+        for (p in _pages.indices) _pages[p] = newPages[p].copyOf()
+        pushSnapshot(beforePages, beforeLocks, beforeIndex, pageIndex)
+        return true
+    }
+
     fun redo(): Boolean {
         when (val entry = redoStack.removeLastOrNull() ?: return false) {
             is CellChangeEntry -> {

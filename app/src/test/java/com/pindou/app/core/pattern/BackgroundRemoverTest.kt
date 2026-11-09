@@ -61,6 +61,35 @@ class BackgroundRemoverTest {
     }
 
     @Test
+    fun `细黑描边的白主体在低分辨率网格下内部白不被误删`() {
+        // 240×240：白底 + 半径 95、4px 粗的黑描边圆，圆内也是白。
+        // 目标网格 40×40 时每格 6px，描边不到 1 格宽——单分辨率泛洪会穿线。
+        val src = 240
+        val pixels = IntArray(src * src) { white }
+        val c = 119.5
+        for (y in 0 until src) for (x in 0 until src) {
+            val d = hypot(x - c, y - c)
+            if (d in 91.0..95.0) pixels[y * src + x] = dark
+        }
+        val w = 40
+        val h = 40
+        val cells = IntArray(w * h)
+        val out = BackgroundRemover.applyToCellsFromPixels(
+            cells, pixels, src, src, w, h, tolerance = 12.0, scale = 3,
+        )
+        // 圆心格（20,20）在主体内部，必须保留为色号 0
+        assertEquals(0, out[20 * w + 20])
+        assertEquals(0, out[15 * w + 20])
+        // 四角是画面外背景，应清空
+        assertEquals(-1, out[0])
+        assertEquals(-1, out[w - 1])
+        val removed = out.count { it == -1 }
+        // 圆面积约占 49%，背景约 51%；跨描边的格子按「保留」处理会留下 1 格白边，
+        // 允许少量残留，但主体外必须清掉大半
+        assertTrue("背景应被大量移除：实际移除 $removed / ${w * h}", removed > w * h * 2 / 5)
+    }
+
+    @Test
     fun `贴边淡色花瓣不被背景移除吃掉`() {
         // 复刻花环猫结构：白底 + 圆环淡粉/粉色花瓣 + 中心灰色主体
         val w = 25

@@ -146,9 +146,17 @@ object PatternGenerator {
         //     主体内部的同色区域（猫脸白、花瓣间淡色）保留
         val cells: IntArray = if (options.removeBackground) {
             onStage(GenerationStage.BACKGROUND, 0f)
-            val removed = BackgroundRemover.applyToCells(
-                mapped, sample.argb, options.gridW, options.gridH,
-                options.backgroundTolerance,
+            // 在 3× 网格上判背景再落回目标网格：目标网格上不足 1 格宽的
+            // 黑色描边会被泛洪从断口穿透，主体内部的白随之被误删。
+            val removed = BackgroundRemover.applyToCellsFromPixels(
+                cells = mapped,
+                pixels = exposurePixels,
+                srcW = srcW,
+                srcH = srcH,
+                w = options.gridW,
+                h = options.gridH,
+                tolerance = options.backgroundTolerance,
+                grid = sample.argb,
             )
             onStage(GenerationStage.BACKGROUND, 1f)
             removed

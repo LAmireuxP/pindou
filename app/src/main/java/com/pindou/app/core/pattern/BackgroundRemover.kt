@@ -233,6 +233,235 @@ object BackgroundRemover {
     }
 
     /**
+     * 高分辨率检测背景，再落回目标网格。
+     *
+     * 白主体 + 黑色细描边的插画，在目标网格上描边往往不到 1 格宽：
+     * 4 连通泛洪会从描边的断口钻进主体内部，把主体里的白一起清掉
+     * （用户反馈的"图像内与图像外一样的背景也被去除"就是这条路径）。
+     *
+     * 这里先在 [scale] 倍网格上求掩码——描边变成 2~3 格宽，剪影能闭合，
+     * 补洞阶段就能把主体内部保护住；再按「子格全部是背景才算背景」降采样。
+     * 跨描边的目标格永远不会被判成背景，描边不会缺角。
+     *
+     * 复杂度：高分辨率采样 O(像素) + 两次 O(子格数)；78×78 图纸约 20ms。
+     */
+    fun applyToCellsFromPixels(
+        cells: IntArray,
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        w: Int,
+        h: Int,
+        tolerance: Double = 12.0,
+        scale: Int = 3,
+        grid: IntArray? = null,
+    ): IntArray {
+        if (scale <= 1) return applyToCells(cells, grid ?: return cells.copyOf(), w, h, tolerance)
+        val mask = detectFromPixels(pixels, srcW, srcH, w, h, tolerance) ?: return cells.copyOf()
+        if (mask.none { it }) return cells.copyOf()
+        val out = cells.copyOf()
+        for (i in 0 until min(out.size, mask.size)) if (mask[i]) out[i] = -1
+        return out
+    }
+
+    /**
+     * 逐像素泛洪判背景。
+     *
+     * 为什么不下在目标网格上判：78 格对应 1280px，一格 16px，而黑描边只有
+     * 7px。把描边和白底平均进同一格会得到浅灰，在网格上看着"接近背景"，
+     * 泛洪顺着这道伪背景钻进主体，白色身体整片被清掉（实测 keep 从 5400
+     * 掉到 816）。像素级上描边是连续实心深色，泛洪过不去，主体内部的
+     * 同色白天然被围住——不需要剪影、不需要补洞。
+     *
+     * 落回目标网格用两条规则：
+     *  1) 该格 ≥80% 像素是背景 → 判背景；
+     *  2) 但格内只要有 ≥2% 像素是"确定前景"（ΔE > 2.2×容差，黑描边必中），
+     *     整格保留。低网格下描边往往不足 1 格宽，这条保证描边不断线。
+     *
+     * 复杂度：工作图上限 640×640，Lab 转换 + 一趟泛洪，78×78 图纸约 30ms。
+     */
+    private fun detectFromPixels(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        w: Int,
+        h: Int,
+        tolerance: Double,
+    ): BooleanArray? {
+        if (w <= 0 || h <= 0 || srcW <= 0 || srcH <= 0) return null
+        if (pixels.size < srcW * srcH) return null
+        // ImagePreprocessor.sample 的网格上限是 500×500，工作图按长边收进来
+        var rw = max(w * 4, 320).coerceAtMost(srcW).coerceAtLeast(8)
+        var rh = ((rw.toLong() * srcH) / srcW).toInt().coerceAtLeast(8)
+        val fit = minOf(1.0, 500.0 / rw, 500.0 / rh)
+        if (fit < 1.0) {
+            rw = max(8, (rw * fit).toInt())
+            rh = max(8, (rh * fit).toInt())
+        }
+        val work = ImagePreprocessor.sample(pixels, srcW, srcH, rw, rh, FilterLevel.NONE).argb
+        val n = rw * rh
+        val lab = FloatArray(n * 3)
+        for (i in 0 until n) {
+            val c = work[i]
+            toLab(
+                ((c shr 16) and 0xFF) / 255f,
+                ((c shr 8) and 0xFF) / 255f,
+                (c and 0xFF) / 255f,
+                lab, i * 3,
+            )
+        }
+        val band = (min(rw, rh) / 50).coerceIn(2, 12)
+        val border = ArrayList<Int>(n / 3)
+        for (y in 0 until rh) for (x in 0 until rw) {
+            if (x < band || y < band || x >= rw - band || y >= rh - band) border.add(y * rw + x)
+        }
+        if (border.size < 8) return null
+        val bgLab = dominantBorderColor(lab, border)
+        val bgChroma = sqrt(bgLab[1] * bgLab[1] + bgLab[2] * bgLab[2])
+        val chromaCut = bgChroma + BG_CHROMA_SLACK
+        val strongCut = tolerance * 2.2
+
+        val bgLike = BooleanArray(n)
+        val strong = BooleanArray(n)
+        for (i in 0 until n) {
+            val a = lab[i * 3 + 1]
+            val b = lab[i * 3 + 2]
+            val d = deltaE76(lab, i * 3, bgLab, 0)
+            if (d > strongCut) {
+                strong[i] = true
+                continue
+            }
+            if (sqrt(a * a + b * b) > chromaCut) continue
+            bgLike[i] = d <= tolerance
+        }
+
+        val bgMask = BooleanArray(n)
+        val queue = IntArray(n)
+        var head = 0
+        var tail = 0
+        fun push(i: Int) {
+            if (!bgMask[i] && bgLike[i]) {
+                bgMask[i] = true
+                queue[tail++] = i
+            }
+        }
+        for (x in 0 until rw) {
+            push(x)
+            push((rh - 1) * rw + x)
+        }
+        for (y in 0 until rh) {
+            push(y * rw)
+            push(y * rw + rw - 1)
+        }
+        while (head < tail) {
+            val i = queue[head++]
+            val x = i % rw
+            val y = i / rw
+            if (x > 0) push(i - 1)
+            if (x < rw - 1) push(i + 1)
+            if (y > 0) push(i - rw)
+            if (y < rh - 1) push(i + rw)
+        }
+        val removed = bgMask.count { it }
+        // 几乎全被删 = 背景模型吃掉了整张图（纯色底/无主体），宁可不删
+        if (removed == 0 || removed > (n * 0.98).toInt()) return BooleanArray(w * h)
+
+        val total = IntArray(w * h)
+        val hits = IntArray(w * h)
+        val hard = IntArray(w * h)
+        for (y in 0 until rh) {
+            val ty = (y.toLong() * h / rh).toInt().coerceIn(0, h - 1)
+            val row = y * rw
+            val trow = ty * w
+            for (x in 0 until rw) {
+                val tx = (x.toLong() * w / rw).toInt().coerceIn(0, w - 1)
+                val t = trow + tx
+                total[t]++
+                if (bgMask[row + x]) hits[t]++
+                if (strong[row + x]) hard[t]++
+            }
+        }
+        val out = BooleanArray(w * h)
+        for (i in out.indices) {
+            val t = total[i]
+            if (t <= 0) continue
+            val mostlyBg = hits[i] * 5 >= t * 4
+            val hasEdge = hard[i] * 50 >= t
+            out[i] = mostlyBg && !hasEdge
+        }
+        // 背景里的 JPEG 噪点、半透明水印会让个别格子满足"格内有强边缘"，留成孤岛。
+        // 4 连通扫一遍，面积低于阈值的碎块直接判成背景。
+        // 阈值 max(4, 全图 0.8%)：78×78 → 48 格，水印残块和边缘噪点都在此列；
+        // 主体是同一个连通块（同一张图 2683 格），不会被误删。
+        val minKeep = max(4, (w * h * 0.008).toInt())
+        val seen = BooleanArray(w * h)
+        val stack = IntArray(w * h)
+        val comp = ArrayList<Int>(64)
+        for (start in out.indices) {
+            if (seen[start] || out[start]) continue
+            var sp = 0
+            stack[sp++] = start
+            seen[start] = true
+            comp.clear()
+            while (sp > 0) {
+                val i = stack[--sp]
+                comp.add(i)
+                val x = i % w
+                val y = i / w
+                if (x > 0 && !seen[i - 1] && !out[i - 1]) { seen[i - 1] = true; stack[sp++] = i - 1 }
+                if (x < w - 1 && !seen[i + 1] && !out[i + 1]) { seen[i + 1] = true; stack[sp++] = i + 1 }
+                if (y > 0 && !seen[i - w] && !out[i - w]) { seen[i - w] = true; stack[sp++] = i - w }
+                if (y < h - 1 && !seen[i + w] && !out[i + w]) { seen[i + w] = true; stack[sp++] = i + w }
+            }
+            if (comp.size < minKeep) for (i in comp) out[i] = true
+        }
+        return out
+    }
+
+    /**
+     * 高分辨率背景掩码 → 目标网格（子格全为背景才是背景）。
+     * 采样失败返回 null；返回空数组表示没检出背景。
+     */
+    fun detectAtScale(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        w: Int,
+        h: Int,
+        tolerance: Double,
+        scale: Int,
+    ): BooleanArray? {
+        if (w <= 0 || h <= 0 || scale <= 1) return null
+        val sw = w * scale
+        val sh = h * scale
+        // ImagePreprocessor.sample 的网格上限 500；超了退回纯网格判定
+        if (sw > 500 || sh > 500) return null
+        // 子网格上限：再大只是重复计算，描边早已闭合
+        if (sw.toLong() * sh > 1024L * 1024L) return null
+        val hi = ImagePreprocessor.sample(pixels, srcW, srcH, sw, sh, FilterLevel.NONE)
+        val hiMask = detect(hi.argb, sw, sh, tolerance)
+        if (hiMask.none { it }) return hiMask
+        val out = BooleanArray(w * h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                var all = true
+                for (dy in 0 until scale) {
+                    if (!all) break
+                    val sy = y * scale + dy
+                    for (dx in 0 until scale) {
+                        if (!hiMask[sy * sw + x * scale + dx]) {
+                            all = false
+                            break
+                        }
+                    }
+                }
+                out[y * w + x] = all
+            }
+        }
+        return out
+    }
+
+    /**
      * 边界主色：把边界带按 Lab 亮度分成 3 段取中位样本，
      * 再选覆盖格数最多的一段作背景参考。只保留一个参考色是刻意的——
      * 多个参考色会把贴着边缘的淡色花瓣也算成背景。

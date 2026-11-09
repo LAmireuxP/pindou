@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PanTool
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -61,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -89,6 +91,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pindou.app.core.editor.BrushStamp
+import com.pindou.app.core.editor.ColorReplaceOps
 import com.pindou.app.core.editor.EditorEngine
 import com.pindou.app.ui.AppViewModel
 import com.pindou.app.ui.CellCodeDrawer
@@ -196,6 +199,9 @@ fun EditorScreen(vm: AppViewModel) {
     var showManageSheet by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showResizeDialog by remember { mutableStateOf(false) }
+    var showReplaceSheet by remember { mutableStateOf(false) }
+    var replaceSource by remember { mutableIntStateOf(0) }
+    var colorOpReport by remember { mutableStateOf<List<ColorReplaceOps.Move>>(emptyList()) }
     var longPressCell by remember { mutableStateOf<Int?>(null) }
     // 长按时只记下格子并高亮，等手指抬起再弹菜单：
     // 弹窗若在按下的中途创建，抬起事件会落到新窗口上被当成「点外部」直接关掉。
@@ -738,6 +744,24 @@ fun EditorScreen(vm: AppViewModel) {
                     showManageSheet = true
                 }
                 MenuItemRow(
+                    icon = Icons.Filled.Palette,
+                    title = "替换相似颜色",
+                    subtitle = "同色系并成一个色号，减少换豆",
+                ) {
+                    showMenu = false
+                    // 默认源色取「当前画笔色」；画笔停在一个没用过的色号上时，
+                    // 直接跳到用量最少的已用色——否则一进来就是「0 格 / 没有可替换的格子」，
+                    // 用户还得自己翻色卡找哪个色真正在图上。
+                    val cur = vm.editorColor.coerceIn(0, palette.colors.lastIndex)
+                    val use = ColorReplaceOps.usage(engine.pages, palette.colors.size)
+                    replaceSource = if (use.getOrElse(cur) { 0 } > 0) {
+                        cur
+                    } else {
+                        use.indices.filter { use[it] > 0 }.minByOrNull { use[it] } ?: cur
+                    }
+                    showReplaceSheet = true
+                }
+                MenuItemRow(
                     icon = Icons.Filled.ContentCopy,
                     title = "复制当前页",
                     subtitle = "新页继承当前页内容与锁定状态",
@@ -885,6 +909,26 @@ fun EditorScreen(vm: AppViewModel) {
                 ) { Text("按当前阈值合并") }
             }
         }
+    }
+
+    // 替换相似颜色
+    if (showReplaceSheet) {
+        ColorReplaceSheet(
+            vm = vm,
+            palette = palette,
+            engine = engine,
+            initialSource = replaceSource,
+            onDismiss = { showReplaceSheet = false },
+            onReport = { colorOpReport = it },
+        )
+    }
+    if (colorOpReport.isNotEmpty()) {
+        ColorReplaceReportDialog(
+            moves = colorOpReport,
+            palette = palette,
+            onUndo = { vm.undoEditor() },
+            onDismiss = { colorOpReport = emptyList() },
+        )
     }
 
     // 长按单格：底部弹层，动作区在手指可达范围内
@@ -1061,6 +1105,25 @@ fun EditorScreen(vm: AppViewModel) {
                     engine.setLocked(cell, !isLocked)
                     vm.notifyEditorChanged()
                     closeSheet()
+                }
+
+                CellActionTile(
+                    icon = Icons.Filled.Palette,
+                    title = "替换相似颜色",
+                    subtitle = if (cellEntry != null) {
+                        "整图 ${cellEntry.code} 及相近色 → 指定色"
+                    } else {
+                        "空格没有颜色"
+                    },
+                    enabled = cellEntry != null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    val seed = colorIdx
+                    closeSheet()
+                    if (seed >= 0) {
+                        replaceSource = seed
+                        showReplaceSheet = true
+                    }
                 }
             }
         }
