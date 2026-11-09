@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -45,6 +46,7 @@ import com.pindou.app.core.image.CropRect
 import com.pindou.app.core.image.ImageTransforms
 import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -52,8 +54,12 @@ import kotlin.math.roundToInt
 private sealed interface CropDrag {
     data class Move(val startRect: CropRect, val startX: Float, val startY: Float) : CropDrag
     data class Resize(val anchorX: Float, val anchorY: Float) : CropDrag
+    data class Edge(val side: CropEdge) : CropDrag
     data class New(val anchorX: Float, val anchorY: Float) : CropDrag
 }
+
+/** 可拖拽的四条边 */
+private enum class CropEdge { LEFT, RIGHT, TOP, BOTTOM }
 
 /** 选区辅助线样式（chip 点击循环切换） */
 private enum class CropGuides(val label: String) {
@@ -228,7 +234,9 @@ private fun CropOverlay(
     val currentGuides by rememberUpdatedState(guides)
     val currentGridW by rememberUpdatedState(gridW)
     val currentGridH by rememberUpdatedState(gridH)
-    val handleR = with(LocalDensity.current) { 22.dp.toPx() }
+    // 命中半径：角柄 44dp（Material 最小触控目标），边柄 20dp（边只留中段，避免与角柄抢）
+    val cornerHitR = with(LocalDensity.current) { 44.dp.toPx() }
+    val edgeHitR = with(LocalDensity.current) { 20.dp.toPx() }
     var drag by remember { mutableStateOf<CropDrag?>(null) }
 
     Canvas(
@@ -237,7 +245,7 @@ private fun CropOverlay(
             .pointerInput(imgW, imgH, scale) {
                 detectDragGestures(
                     onDragStart = { pos ->
-                        drag = hitTest(pos, currentRect, scale, handleR)
+                        drag = hitTest(pos, currentRect, scale, cornerHitR, edgeHitR)
                     },
                     onDrag = { change, _ ->
                         change.consume()
@@ -260,6 +268,7 @@ private fun CropOverlay(
                                 is CropDrag.Resize -> ImageTransforms.rectFromAnchor(
                                     mode.anchorX, mode.anchorY, ix, iy, ratio, maxW, maxH,
                                 )
+                                is CropDrag.Edge -> edgeResize(mode.side, r, ix, iy, ratio, maxW, maxH)
                                 is CropDrag.New -> ImageTransforms.rectFromAnchor(
                                     mode.anchorX, mode.anchorY, ix, iy, ratio, maxW, maxH,
                                 )
@@ -271,12 +280,18 @@ private fun CropOverlay(
                 )
             },
     ) {
-        drawCropUi(currentRect, scale, handleR, currentGuides)
+        drawCropUi(currentRect, scale, currentGuides)
     }
 }
 
-/** 命中测试：角柄优先，其次框内移动，框外重新框选 */
-private fun hitTest(pos: Offset, rect: CropRect, scale: Float, handleR: Float): CropDrag {
+/** 命中测试：角柄优先 → 边柄中段 → 框内移动 → 框外重新框选 */
+private fun hitTest(
+    pos: Offset,
+    rect: CropRect,
+    scale: Float,
+    cornerHitR: Float,
+    edgeHitR: Float,
+): CropDrag {
     val cl = rect.left * scale
     val ct = rect.top * scale
     val cr = rect.right * scale
@@ -291,10 +306,23 @@ private fun hitTest(pos: Offset, rect: CropRect, scale: Float, handleR: Float): 
             bestCorner = i
         }
     }
-    if (bestCorner >= 0 && bestDist <= handleR) {
+    if (bestCorner >= 0 && bestDist <= cornerHitR) {
         val anchorX = if (bestCorner == 0 || bestCorner == 2) rect.right else rect.left
         val anchorY = if (bestCorner < 2) rect.bottom else rect.top
         return CropDrag.Resize(anchorX, anchorY)
+    }
+    // 边柄：命中边线附近、且落在该边中段（两端让位给角柄）
+    val spanH = cb - ct
+    val margin = spanH * 0.22f
+    val inTopPart = pos.y > ct + margin && pos.y < cb - margin
+    val spanW = cr - cl
+    val marginW = spanW * 0.22f
+    val inLeftPart = pos.x > cl + marginW && pos.x < cr - marginW
+    when {
+        abs(pos.x - cl) <= edgeHitR && inTopPart && spanH > 2 * margin -> return CropDrag.Edge(CropEdge.LEFT)
+        abs(pos.x - cr) <= edgeHitR && inTopPart && spanH > 2 * margin -> return CropDrag.Edge(CropEdge.RIGHT)
+        abs(pos.y - ct) <= edgeHitR && inLeftPart && spanW > 2 * marginW -> return CropDrag.Edge(CropEdge.TOP)
+        abs(pos.y - cb) <= edgeHitR && inLeftPart && spanW > 2 * marginW -> return CropDrag.Edge(CropEdge.BOTTOM)
     }
     val ix = pos.x / scale
     val iy = pos.y / scale
@@ -305,7 +333,7 @@ private fun hitTest(pos: Offset, rect: CropRect, scale: Float, handleR: Float): 
     }
 }
 
-private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, handleR: Float, guides: CropGuides) {
+private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, guides: CropGuides) {
     val cl = rect.left * scale
     val ct = rect.top * scale
     val cr = rect.right * scale
@@ -325,12 +353,89 @@ private fun DrawScope.drawCropUi(rect: CropRect, scale: Float, handleR: Float, g
         drawGuides(guides, cl, ct, w, h)
     }
 
-    // 边框与角柄
+    // 边框
     drawRect(Color.White, Offset(cl, ct), Size(w, h), style = Stroke(2.dp.toPx()))
-    val dotR = handleR * 0.45f
-    arrayOf(Offset(cl, ct), Offset(cr, ct), Offset(cl, cb), Offset(cr, cb)).forEach { c ->
-        drawCircle(Color.White, dotR, c)
-        drawCircle(ClayColors.BrandPink, dotR * 0.45f, c)
+    // 角柄：L 形括弧（拖拽语义清晰、视觉面积大）
+    val arm = 18.dp.toPx()
+    val stroke = Stroke(4.dp.toPx(), cap = StrokeCap.Round)
+    val bracket = listOf(
+        // 左上
+        Offset(cl, ct) to Offset(cl + arm, ct),
+        Offset(cl, ct) to Offset(cl, ct + arm),
+        // 右上
+        Offset(cr, ct) to Offset(cr - arm, ct),
+        Offset(cr, ct) to Offset(cr, ct + arm),
+        // 左下
+        Offset(cl, cb) to Offset(cl + arm, cb),
+        Offset(cl, cb) to Offset(cl, cb - arm),
+        // 右下
+        Offset(cr, cb) to Offset(cr - arm, cb),
+        Offset(cr, cb) to Offset(cr, cb - arm),
+    )
+    bracket.forEach { (a, b) -> drawLine(Color.White, a, b, stroke.width, cap = StrokeCap.Round) }
+    // 边柄：四边中点小圆点（可按住整条边中段拖动）
+    val midDotR = 5.dp.toPx()
+    arrayOf(
+        Offset(cl, (ct + cb) / 2f),
+        Offset(cr, (ct + cb) / 2f),
+        Offset((cl + cr) / 2f, ct),
+        Offset((cl + cr) / 2f, cb),
+    ).forEach { m ->
+        drawCircle(Color.White, midDotR, m)
+        drawCircle(ClayColors.BrandPink, midDotR * 0.5f, m)
+    }
+}
+
+/** 拖一条边：自由模式只动该边；锁定比例时另一轴联动并保持原中心 */
+private fun edgeResize(
+    side: CropEdge,
+    r: CropRect,
+    ix: Float,
+    iy: Float,
+    ratio: Float?,
+    maxW: Float,
+    maxH: Float,
+): CropRect = when (side) {
+    CropEdge.LEFT -> {
+        val right = r.right
+        if (ratio == null) {
+            CropRect(ix.coerceIn(0f, right - 1f), r.top, right, r.bottom)
+        } else {
+            // 锁比例时从对边中点向手指方向拉（rectFromAnchor 负责等比与边界钳制）
+            ImageTransforms.rectFromAnchor(
+                right, r.top + r.height / 2f, ix, iy, ratio, maxW, maxH,
+            )
+        }
+    }
+    CropEdge.RIGHT -> {
+        val left = r.left
+        if (ratio == null) {
+            CropRect(left, r.top, ix.coerceIn(left + 1f, maxW), r.bottom)
+        } else {
+            ImageTransforms.rectFromAnchor(
+                left, r.top + r.height / 2f, ix, iy, ratio, maxW, maxH,
+            )
+        }
+    }
+    CropEdge.TOP -> {
+        val bottom = r.bottom
+        if (ratio == null) {
+            CropRect(r.left, iy.coerceIn(0f, bottom - 1f), r.right, bottom)
+        } else {
+            ImageTransforms.rectFromAnchor(
+                r.left + r.width / 2f, bottom, ix, iy, ratio, maxW, maxH,
+            )
+        }
+    }
+    CropEdge.BOTTOM -> {
+        val top = r.top
+        if (ratio == null) {
+            CropRect(r.left, top, r.right, iy.coerceIn(top + 1f, maxH))
+        } else {
+            ImageTransforms.rectFromAnchor(
+                r.left + r.width / 2f, top, ix, iy, ratio, maxW, maxH,
+            )
+        }
     }
 }
 

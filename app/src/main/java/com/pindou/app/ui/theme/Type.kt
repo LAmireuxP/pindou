@@ -7,11 +7,11 @@ import androidx.compose.ui.unit.sp
 
 // Clay typography 体系映射到 Material3（display 用系统无衬线加粗替代 Plain Black，M8 再评估内置圆润字体）
 private val DisplayLarge = TextStyle(
-    fontSize = 40.sp, fontWeight = FontWeight(500), lineHeight = 44.sp, letterSpacing = (-1).sp,
+    fontSize = 40.sp, fontWeight = FontWeight(700), lineHeight = 44.sp, letterSpacing = (-1).sp,
 )
 
 private val DisplayMedium = TextStyle(
-    fontSize = 32.sp, fontWeight = FontWeight(500), lineHeight = 37.sp, letterSpacing = (-0.5).sp,
+    fontSize = 32.sp, fontWeight = FontWeight(700), lineHeight = 37.sp, letterSpacing = (-0.5).sp,
 )
 
 private val HeadlineMedium = TextStyle(
