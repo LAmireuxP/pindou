@@ -191,9 +191,17 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                 // 评分明细：分数是结论，这三个比例是原因，用户可以据此决定换不换参数
                 if (result.quality.score > 0) {
                     Text(
-                        "${result.quality.label} · 碎点 ${"%.1f".format(result.quality.breakRate * 100)}%" +
-                            " · 糊边 ${"%.1f".format(result.quality.flattenRate * 100)}%" +
-                            " · 平均色差 ${"%.1f".format(result.quality.meanDeltaE)}",
+                        if (result.pixelArt) {
+                            // 像素画没有照片纹理，碎点/糊边是色卡覆盖限制，不是转换失误；
+                            // 这里只报逐格色差，避免"看着很准却写着失真明显"的自相矛盾
+                            "逐像素还原原画 · 平均色差 ${"%.1f".format(result.quality.meanDeltaE)}" +
+                                " · P90 ${"%.1f".format(result.quality.p90DeltaE)}" +
+                                " · ${result.quality.colorCount} 色"
+                        } else {
+                            "${result.quality.label} · 碎点 ${"%.1f".format(result.quality.breakRate * 100)}%" +
+                                " · 糊边 ${"%.1f".format(result.quality.flattenRate * 100)}%" +
+                                " · 平均色差 ${"%.1f".format(result.quality.meanDeltaE)}"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier

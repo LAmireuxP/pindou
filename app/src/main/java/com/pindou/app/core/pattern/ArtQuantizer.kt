@@ -224,8 +224,15 @@ object ArtQuantizer {
         return assemble(despeckled, art, gridW, gridH)
     }
 
-    /** 同一画像素抖动合并阈值（CIEDE2000） */
-    private const val NOISE_MERGE_DELTA = 3.0
+    /**
+     * 同一画像素抖动合并阈值（Lab ΔE）。
+     *
+     * 3.0 只够合并完全同色的 JPEG 抖动；放大过的像素画在块边界会偏出
+     * 4~5，一朵原本单色的花瓣被拆成 E08/F24 两种豆，逐格交替就是用户
+     * 眼里的"胡椒面"。抬到 4.5 后同一片花瓣落成同一个色号，源图里
+     * 真实存在的层次（ΔE > 8）仍然分得开。
+     */
+    private const val NOISE_MERGE_DELTA = 4.5
 
     /** 光晕判据：够亮、够中性 */
     private const val GLOW_MIN_L = 88f

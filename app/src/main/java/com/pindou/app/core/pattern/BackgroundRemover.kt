@@ -77,13 +77,22 @@ object BackgroundRemover {
         val grown = dilate(confident, w, h, SILHOUETTE_GROW)
         val silhouette = fillHoles(grown, w, h)
 
-        // ④ 只从边界泛洪，且只走 bgLike、不进剪影
+        // ③b 前景闭合：所有"非背景色"的格子先向外膨胀 1 格，泛洪不许穿过。
+        //
+        // 画像素之间常有一格宽的白缝（花瓣只在一个角上相接），8 邻域泛洪
+        // 会从对角缝钻进花环内部，把主体环内的白色一起清掉——用户看到的
+        // "和内背景同样的白也被去掉了"就是这条路径。先把前景缝焊死，
+        // 泛洪就只能沿真正的外部背景走。
+        val closedFg = dilate(BooleanArray(n) { !bgLike[it] }, w, h, 1)
+
+        // ④ 只从边界泛洪，且只走 bgLike、不进剪影、不穿闭合后的前景。
+        //    邻域用 4 连通：对角相接的前景已经挡住，不需要再给泛洪留斜穿口。
         val mask = BooleanArray(n)
         val queue = IntArray(n)
         var head = 0
         var tail = 0
         fun push(i: Int) {
-            if (!mask[i] && bgLike[i] && !silhouette[i]) {
+            if (!mask[i] && bgLike[i] && !silhouette[i] && !closedFg[i]) {
                 mask[i] = true
                 queue[tail++] = i
             }
@@ -100,16 +109,13 @@ object BackgroundRemover {
             val i = queue[head++]
             val x = i % w
             val y = i / w
-            // 8 邻域：像素画的斜向背景连通必须算通，否则会留一圈白边
-            for (dy in -1..1) for (dx in -1..1) {
-                if (dx == 0 && dy == 0) continue
-                val nx = x + dx
-                val ny = y + dy
-                if (nx in 0 until w && ny in 0 until h) push(ny * w + nx)
-            }
+            if (x > 0) push(i - 1)
+            if (x < w - 1) push(i + 1)
+            if (y > 0) push(i - w)
+            if (y < h - 1) push(i + w)
         }
 
-        // ⑤ 剪影外圈「纯背景色」清理：膨胀保护带会留下 1~2 格白晕，
+        // ⑤ 前景外圈「纯背景色」清理：膨胀保护带会留下 1~2 格白晕，
         //    只吃与背景几乎同色（ΔE ≤ 容差×0.35）且与已移除区相连的格子，
         //    淡粉花瓣（ΔE 通常 6~12）不会被这一步吃掉。
         val strictCut = max(2.0, tolerance * 0.35)
@@ -117,34 +123,74 @@ object BackgroundRemover {
         var h2 = 0
         var t2 = 0
         fun pushHalo(i: Int) {
-            if (mask[i] || !grown[i] || confident[i]) return
+            if (mask[i] || confident[i]) return
             if (deltaE76(lab, i * 3, bgLab, 0) > strictCut) return
             mask[i] = true
             queue2[t2++] = i
         }
         for (i in 0 until n) {
-            if (mask[i] || !grown[i] || confident[i]) continue
+            if (mask[i] || confident[i]) continue
             val x = i % w
             val y = i / w
-            for (dy in -1..1) for (dx in -1..1) {
-                val nx = x + dx
-                val ny = y + dy
-                if (nx in 0 until w && ny in 0 until h && mask[ny * w + nx]) {
-                    pushHalo(i)
-                    break
-                }
-            }
+            val touching = (x > 0 && mask[i - 1]) || (x < w - 1 && mask[i + 1]) ||
+                (y > 0 && mask[i - w]) || (y < h - 1 && mask[i + w])
+            if (touching) pushHalo(i)
         }
         while (h2 < t2) {
             val i = queue2[h2++]
             val x = i % w
             val y = i / w
-            for (dy in -1..1) for (dx in -1..1) {
-                if (dx == 0 && dy == 0) continue
-                val nx = x + dx
-                val ny = y + dy
-                if (nx in 0 until w && ny in 0 until h) pushHalo(ny * w + nx)
+            // 4 连通：斜角不算相连，避免白晕从对角缝重新渗回主体内部
+            if (x > 0) pushHalo(i - 1)
+            if (x < w - 1) pushHalo(i + 1)
+            if (y > 0) pushHalo(i - w)
+            if (y < h - 1) pushHalo(i + w)
+        }
+
+        // ⑥ 焊缝残留清理：前景闭合会在主体外沿留下一些到不了边界的
+        //    背景色小岛（几格白点）。按 4 连通分块，面积小于全图 1% 的
+        //    背景色碎块直接清掉；花环内部的大片白区面积远大于阈值，
+        //    且落在剪影里，不会被这一刀误伤。
+        val islandMax = max(4, (n * 0.01).toInt())
+        val seen = BooleanArray(n)
+        val stack = IntArray(n)
+        for (start in 0 until n) {
+            if (seen[start] || mask[start] || !bgLike[start] || silhouette[start]) continue
+            var sp = 0
+            stack[sp++] = start
+            seen[start] = true
+            val comp = ArrayList<Int>()
+            while (sp > 0) {
+                val i = stack[--sp]
+                comp.add(i)
+                val x = i % w
+                val y = i / w
+                if (x > 0) {
+                    val j = i - 1
+                    if (!seen[j] && !mask[j] && bgLike[j] && !silhouette[j]) {
+                        seen[j] = true; stack[sp++] = j
+                    }
+                }
+                if (x < w - 1) {
+                    val j = i + 1
+                    if (!seen[j] && !mask[j] && bgLike[j] && !silhouette[j]) {
+                        seen[j] = true; stack[sp++] = j
+                    }
+                }
+                if (y > 0) {
+                    val j = i - w
+                    if (!seen[j] && !mask[j] && bgLike[j] && !silhouette[j]) {
+                        seen[j] = true; stack[sp++] = j
+                    }
+                }
+                if (y < h - 1) {
+                    val j = i + w
+                    if (!seen[j] && !mask[j] && bgLike[j] && !silhouette[j]) {
+                        seen[j] = true; stack[sp++] = j
+                    }
+                }
             }
+            if (comp.size <= islandMax) for (i in comp) mask[i] = true
         }
 
         val removed = mask.count { it }

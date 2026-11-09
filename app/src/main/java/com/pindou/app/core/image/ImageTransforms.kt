@@ -126,6 +126,44 @@ object ImageTransforms {
     }
 
     /**
+     * 图像内最大的居中正方形选区。
+     *
+     * 为什么默认给正方形：拼豆图纸常见的模板是方阵（30×30、50×50），
+     * 手机随手拍的照片却是 4:3 / 16:9。直接按全图生成，要么被拉伸，
+     * 要么上下留一大条白边；居中正方形把主体留在中间，同时保证
+     * 宽高比锁死，后续任何网格都不会变形。
+     */
+    fun centerSquare(width: Int, height: Int): CropRect {
+        require(width > 0 && height > 0) { "图片尺寸非法: ${width}x$height" }
+        val side = min(width, height).toFloat()
+        val left = (width - side) / 2f
+        val top = (height - side) / 2f
+        return CropRect(left, top, left + side, top + side)
+    }
+
+    /**
+     * 图像内最大的居中定比选区（用于「锁定网格比例」时把选区吸附到该比例）。
+     * @param ratio 宽/高
+     */
+    fun centeredAspect(width: Int, height: Int, ratio: Float): CropRect {
+        require(width > 0 && height > 0) { "图片尺寸非法: ${width}x$height" }
+        require(ratio > 0f) { "比例非法: $ratio" }
+        val imgRatio = width.toFloat() / height
+        val w: Float
+        val h: Float
+        if (imgRatio > ratio) {
+            h = height.toFloat()
+            w = h * ratio
+        } else {
+            w = width.toFloat()
+            h = w / ratio
+        }
+        val left = (width - w) / 2f
+        val top = (height - h) / 2f
+        return CropRect(left, top, left + w, top + h)
+    }
+
+    /**
      * 从锚点向目标点拉出一个矩形（角柄缩放与重新框选共用）。
      * @param ratio 宽高比（宽/高）；null = 自由比例。锁定比例时结果等比钳制在图像范围内。
      */

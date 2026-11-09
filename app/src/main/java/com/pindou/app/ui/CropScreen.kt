@@ -77,6 +77,19 @@ private enum class CropGuides(val label: String) {
 }
 
 /**
+ * 选区比例模式。
+ *
+ * - FREE   自由：拖动不约束，适合先框出主体再进参数页
+ * - GRID   网格比例：锁定当前网格宽高比（像素画默认走这档，原画 56:50）
+ * - SQUARE 正方形：锁定 1:1，照片默认走这档——方图套任意方阵都不会拉伸
+ */
+private enum class CropAspect(val label: String) {
+    FREE("自由"),
+    GRID("网格比例"),
+    SQUARE("正方形 1:1"),
+}
+
+/**
  * 裁剪与旋转页：拖动选区、角柄缩放、旋转/镜像、按网格比例锁定。
  * 确认后才真正裁剪像素；旋转与镜像即时生效（作用于工作图）。
  */
@@ -86,7 +99,11 @@ fun CropScreen(vm: AppViewModel) {
     val rect = vm.cropRect
     val imgW = vm.imageW
     val imgH = vm.imageH
-    var aspectLocked by remember { mutableStateOf(false) }
+    // 像素画默认锁原画比例（56:50 不是正方形，锁 1:1 会切掉一行画像素）；
+    // 照片默认 1:1，导入时选区已经吸附成中心正方形。
+    var aspect by remember {
+        mutableStateOf(if (vm.pixelArtGrid != null) CropAspect.GRID else CropAspect.SQUARE)
+    }
     var guides by remember { mutableStateOf(CropGuides.THIRDS) }
 
     Column(
@@ -139,10 +156,12 @@ fun CropScreen(vm: AppViewModel) {
                     scale = scale,
                     imgW = imgW,
                     imgH = imgH,
-                    aspectLocked = aspectLocked,
+                    ratio = when (aspect) {
+                        CropAspect.FREE -> null
+                        CropAspect.SQUARE -> 1f
+                        CropAspect.GRID -> if (vm.gridH > 0) vm.gridW.toFloat() / vm.gridH else 1f
+                    },
                     guides = guides,
-                    gridW = vm.gridW,
-                    gridH = vm.gridH,
                     onRectChange = { vm.updateCropRect(it) },
                 )
             }
@@ -151,7 +170,11 @@ fun CropScreen(vm: AppViewModel) {
         Text(
             buildString {
                 append("选区 ${rect.width.roundToInt()}×${rect.height.roundToInt()} px")
-                if (aspectLocked) append(" · 锁定 ${vm.gridW}:${vm.gridH}")
+                when (aspect) {
+                    CropAspect.SQUARE -> append(" · 锁定 1:1")
+                    CropAspect.GRID -> append(" · 锁定 ${vm.gridW}:${vm.gridH}")
+                    CropAspect.FREE -> append(" · 自由比例")
+                }
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -214,11 +237,28 @@ fun CropScreen(vm: AppViewModel) {
                 selected = guides != CropGuides.NONE,
                 onClick = { guides = guides.next() },
             )
-            ShChip(
-                text = if (aspectLocked) "已锁定 ${vm.gridW}:${vm.gridH}" else "锁定网格比例",
-                selected = aspectLocked,
-                onClick = { aspectLocked = !aspectLocked },
-            )
+            CropAspect.entries.forEach { mode ->
+                ShChip(
+                    text = mode.label,
+                    selected = aspect == mode,
+                    onClick = {
+                        aspect = mode
+                        // 切换比例时把选区吸附到该比例的最大居中框：
+                        // 否则「已锁定」只是约束下一次拖动，当前选区仍是歪的，
+                        // 点下一步照样变形。
+                        vm.updateCropRect(
+                            when (mode) {
+                                CropAspect.FREE -> rect
+                                CropAspect.SQUARE -> ImageTransforms.centerSquare(imgW, imgH)
+                                CropAspect.GRID -> ImageTransforms.centeredAspect(
+                                    imgW, imgH,
+                                    if (vm.gridH > 0) vm.gridW.toFloat() / vm.gridH else 1f,
+                                )
+                            },
+                        )
+                    },
+                )
+            }
         }
 
         Row(
@@ -252,17 +292,13 @@ private fun CropOverlay(
     scale: Float,
     imgW: Int,
     imgH: Int,
-    aspectLocked: Boolean,
+    ratio: Float?,
     guides: CropGuides,
-    gridW: Int,
-    gridH: Int,
     onRectChange: (CropRect) -> Unit,
 ) {
     val currentRect by rememberUpdatedState(rect)
-    val currentLocked by rememberUpdatedState(aspectLocked)
+    val currentRatio by rememberUpdatedState(ratio)
     val currentGuides by rememberUpdatedState(guides)
-    val currentGridW by rememberUpdatedState(gridW)
-    val currentGridH by rememberUpdatedState(gridH)
     // 命中半径：角柄 56dp、边柄 28dp。44dp 是 Material 的下限，但手指实际
     // 落点在 50dp 以上才稳；边柄跟着放大，靠内段的移动手势仍然保留。
     val cornerHitR = with(LocalDensity.current) { 56.dp.toPx() }
@@ -285,11 +321,7 @@ private fun CropOverlay(
                         val iy = change.position.y / scale
                         val maxW = imgW.toFloat()
                         val maxH = imgH.toFloat()
-                        val ratio = if (currentLocked && currentGridH > 0) {
-                            currentGridW.toFloat() / currentGridH
-                        } else {
-                            null
-                        }
+                        val ratio = currentRatio
                         onRectChange(
                             when (mode) {
                                 is CropDrag.Move -> ImageTransforms.movedBy(

@@ -98,10 +98,15 @@ object ImagePreprocessor {
         require(srcW > 0 && srcH > 0) { "源图尺寸非法: ${srcW}x$srcH" }
         require(pixels.size >= srcW * srcH) { "像素数 ${pixels.size} < ${srcW}x$srcH" }
 
-        // 像素画检测支路停用：在实测图上它把 801×743 的像素画认成 24px 块
-        // （实际 12.11px），还原网格 32×30 与真实 66×61 差一倍，量化后五官
-        // 整片塌掉。面积平均 + 边界格锐化在同一张图上的还原度更高，所以统一
-        // 走这一条，不再按源图类型分叉。PixelArtDetector 仅保留做诊断。
+        // 像素画支路：源图本身是放大过的像素画时，先还原画像素网格再落格。
+        // 旧检测器把 801×743 认成 24px 块（谐波），2026-11 改成自相关基频 +
+        // 平坦段集中度 + 块内均匀度三重判据，评测集 3 张像素画全部命中、
+        // 5 张照片全部拒绝。命中后颜色只取源图里真实存在的那些，不会被
+        // 白底稀释成灰粉。
+        val art = PixelArtDetector.detect(pixels, srcW, srcH)
+        if (art != null) {
+            return sampleArt(pixels, srcW, srcH, gridW, gridH, art)
+        }
         val iw = gridW * SCALE
         val ih = gridH * SCALE
         val n = iw * ih

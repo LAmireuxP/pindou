@@ -30,6 +30,7 @@ import com.pindou.app.core.pattern.AutoTuner
 import com.pindou.app.core.pattern.FilterLevel
 import com.pindou.app.core.pattern.PatternGenerator
 import com.pindou.app.core.pattern.PatternResult
+import com.pindou.app.core.pattern.PixelArtDetector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -124,6 +125,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // 参数
     var gridW by mutableIntStateOf(29)
     var gridH by mutableIntStateOf(29)
+
+    /**
+     * 像素画原图的画像素网格（null = 当前图不是像素画 / 或尚未检测）。
+     *
+     * 有这个值的时候，网格尺寸不应该由用户随手输入——56×50 的原画配
+     * 56×50 之外的网格，ArtQuantizer 会把每个画像素拉伸成不等宽块，
+     * 花瓣的圆弧就会变成台阶。UI 优先展示「原画网格」一键套用。
+     */
+    var pixelArtGrid by mutableStateOf<Pair<Int, Int>?>(null)
+        private set
+
+    /** 自定义宽高时是否联动另一轴（默认开，防止宽高独立输入把图拉扁） */
+    var lockGridAspect by mutableStateOf(true)
+        private set
     var limitColors by mutableStateOf(false)
     var maxColors by mutableIntStateOf(24)
     var dithering by mutableStateOf(false)
@@ -247,6 +262,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
                 Triple(bmp, pixels, intArrayOf(bmp.width, bmp.height))
             }.onSuccess { (bmp, pixels, size) ->
+                // 像素画检测放在导入线程里做（O(源像素)，200 条抽样线），
+                // 检测结果决定默认裁剪和默认网格，必须在进入裁剪页之前拿到。
+                val art = PixelArtDetector.detect(pixels, size[0], size[1])
+                pixelArtGrid = art?.let { it.artW to it.artH }
+                // 像素画原图默认「无过滤」：不聚类、不限色，逐画像素直接映射
+                // 色卡，源图每一层淡粉/淡黄都能落成独立色号。照片维持中过滤。
+                filterLevel = if (art != null) FilterLevel.NONE else FilterLevel.MEDIUM
                 originalPixels = pixels
                 originalW = size[0]
                 originalH = size[1]
@@ -254,7 +276,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 imagePixels = pixels
                 imageW = size[0]
                 imageH = size[1]
-                cropRect = CropRect.full(size[0], size[1])
+                // 导入时就按图的主体定位：像素画保留完整画布（裁掉白边反而丢画像素），
+                // 照片默认取中心最大正方形，避免后续网格宽高比不一致时被拉伸。
+                cropRect = if (art != null) {
+                    CropRect.full(size[0], size[1])
+                } else {
+                    ImageTransforms.centerSquare(size[0], size[1])
+                }
+                if (art != null) {
+                    gridW = art.artW.coerceIn(5, 200)
+                    gridH = art.artH.coerceIn(5, 200)
+                }
                 paramsFromCrop = false
                 adaptiveAnchor = 0
                 adaptiveScale = 1f
@@ -287,10 +319,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         imagePreview = Bitmap.createBitmap(p, imageW, imageH, Bitmap.Config.ARGB_8888)
     }
 
+    /**
+     * 几何变换后重新识别像素画网格。
+     *
+     * 裁剪/旋转会换掉像素数组（检测器的缓存按数组实例失效），画像素网格
+     * 也可能变（裁掉一圈后 56×50 会变成 54×48）。识别到就把网格同步成
+     * 原画尺寸，用户不必自己数格子。
+     */
+    private fun refreshPixelArt(pixels: IntArray, w: Int, h: Int) {
+        val art = PixelArtDetector.detect(pixels, w, h)
+        pixelArtGrid = art?.let { it.artW to it.artH }
+        if (art != null) {
+            filterLevel = FilterLevel.NONE
+            gridW = art.artW.coerceIn(5, 200)
+            gridH = art.artH.coerceIn(5, 200)
+            adaptiveAnchor = 0
+            adaptiveScale = 1f
+        }
+    }
+
     /** 进入裁剪页（参数页「重新裁剪」入口；导入后自动进入，不经此函数） */
     fun openCrop() {
         if (imagePixels == null || imageW <= 0 || imageH <= 0) return
-        cropRect = CropRect.full(imageW, imageH)
+        // 重新裁剪时按当前图的主体重置（像素画给全图，照片给中心正方形）
+        cropRect = if (pixelArtGrid != null) {
+            CropRect.full(imageW, imageH)
+        } else {
+            ImageTransforms.centerSquare(imageW, imageH)
+        }
         screen = Screen.CROP
     }
 
@@ -311,6 +367,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             imageH = t.height
             if (rect != null) cropRect = ImageTransforms.rotateRect(rect, w, h, clockwise)
             rebuildPreview()
+            refreshPixelArt(t.pixels, t.width, t.height)
         }
     }
 
@@ -327,6 +384,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             imageH = t.height
             if (rect != null) cropRect = ImageTransforms.mirrorRect(rect, w, h, horizontal)
             rebuildPreview()
+            refreshPixelArt(t.pixels, t.width, t.height)
         }
     }
 
@@ -341,6 +399,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             imageH = h
             cropRect = CropRect.full(w, h)
             rebuildPreview()
+            refreshPixelArt(pixels, w, h)
         }
     }
 
@@ -364,6 +423,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             imageH = t.height
             cropRect = CropRect.full(t.width, t.height)
             rebuildPreview()
+            refreshPixelArt(t.pixels, t.width, t.height)
             withContext(Dispatchers.Main) {
                 paramsFromCrop = true
                 screen = Screen.PARAMS
@@ -403,19 +463,72 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         adaptiveScale = 1f
     }
 
+    /** 当前应使用的宽高比：像素画用原画网格，照片用图片本身 */
+    private fun effectiveAspect(): Double {
+        val art = pixelArtGrid
+        if (art != null && art.second > 0) return art.first.toDouble() / art.second
+        return if (imageW > 0 && imageH > 0) imageW.toDouble() / imageH else 1.0
+    }
+
+    fun toggleGridAspectLock() {
+        lockGridAspect = !lockGridAspect
+    }
+
+    /**
+     * 自定义宽输入：锁定比例时按当前有效宽高比推导高。
+     *
+     * 旧版两个输入框各写各的，29×46 这种组合会让降采样按宽、高独立映射，
+     * 圆脸被拉成椭圆——用户说的"自定义尺寸会变形"就是这条路径。
+     */
+    fun setGridWidthInput(w: Int) {
+        val cw = w.coerceIn(5, 200)
+        gridW = cw
+        if (lockGridAspect) {
+            gridH = (cw / effectiveAspect()).roundToInt().coerceIn(5, 200)
+        }
+        adaptiveAnchor = 0
+        adaptiveScale = 1f
+    }
+
+    /** 自定义高输入：锁定比例时按当前有效宽高比推导宽 */
+    fun setGridHeightInput(h: Int) {
+        val ch = h.coerceIn(5, 200)
+        gridH = ch
+        if (lockGridAspect) {
+            gridW = (ch * effectiveAspect()).roundToInt().coerceIn(5, 200)
+        }
+        adaptiveAnchor = 0
+        adaptiveScale = 1f
+    }
+
+    /** 一键套用像素画原画网格（56×50 这种，一比一还原画像素） */
+    fun applyArtGrid() {
+        val art = pixelArtGrid ?: return
+        setGridSize(art.first, art.second)
+    }
+
     /**
      * 「原图尺寸」档位：宽度固定，高度按图片比例推导。
      * 对齐颂拼豆的档位语义——只选一个数，长边不拉伸，避免方形网格把照片压扁。
      */
     fun setGridWidthPreset(width: Int) {
         val w = width.coerceIn(5, 200)
-        val h = if (imageW > 0 && imageH > 0) {
-            (w.toDouble() * imageH / imageW).roundToInt().coerceIn(5, 200)
-        } else w
+        val h = (w / effectiveAspect()).roundToInt().coerceIn(5, 200)
         setGridSize(w, h)
     }
 
     private fun recomputeAdaptive() {
+        // 像素画的自适应就是原画网格（×放大倍数）：56×50 的图给 78×70
+        // 会把画像素切成两半，颜色被平均成源图不存在的过渡色。
+        val art = pixelArtGrid
+        if (art != null) {
+            val (w, h) = ImageTransforms.scaledGridSize(
+                art.first, art.second, adaptiveScale.toDouble(),
+            )
+            gridW = w
+            gridH = h
+            return
+        }
         val (baseW, baseH) = ImageTransforms.adaptiveGridSize(imageW, imageH, adaptiveAnchor)
         val (w, h) = ImageTransforms.scaledGridSize(baseW, baseH, adaptiveScale.toDouble())
         gridW = w
@@ -480,7 +593,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val outcome = AutoTuner.sweep(
                     pixels, imageW, imageH, base, palette,
-                    maxColorsOptions = AutoTuner.defaultColorOptions(base),
+                    // 像素画只比「无过滤」一档：聚类/限色都会把原画的离散色块
+                    // 重新揉成过渡色，和"一比一还原画像素"目标相反。
+                    levels = if (pixelArtGrid != null) {
+                        listOf(FilterLevel.NONE)
+                    } else {
+                        FilterLevel.entries.toList()
+                    },
+                    maxColorsOptions = if (pixelArtGrid != null) {
+                        listOf(base.maxColors)
+                    } else {
+                        AutoTuner.defaultColorOptions(base)
+                    },
                 ) { done, total, _ ->
                     // 进度按组数推进，视觉上要动；最后一组留给评分/落库
                     genState = GenState.Running(GenerationStage.MAP, done.toFloat() / total)
@@ -504,8 +628,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         .maxByOrNull { it.score }
                         ?.let { lvl.label to it.score }
                 }
+                val qualityText = if (best.result.pixelArt) {
+                    "逐像素还原 · 平均色差 %.1f · %d 色".format(
+                        best.result.quality.meanDeltaE, best.result.quality.colorCount,
+                    )
+                } else {
+                    best.result.quality.summary()
+                }
                 autoTuneInfo = "自动优选：${best.filterLevel.label} · " +
-                    (best.maxColors?.let { "$it 色" } ?: "不限色") + " · " + best.result.quality.summary() +
+                    (best.maxColors?.let { "$it 色" } ?: "不限色") + " · " + qualityText +
                     if (gain > 0) " · 比原参数高 $gain 分" else ""
                 genState = GenState.Done(best.result)
                 saveAfterGenerate(best.result)
@@ -654,6 +785,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 imagePixels = pixels
                 imageW = bitmap.width
                 imageH = bitmap.height
+                // 文字位图不是照片也不是像素画，清掉画像素网格，避免沿用上一张图的 56×50
+                pixelArtGrid = null
                 originalPixels = pixels
                 originalW = bitmap.width
                 originalH = bitmap.height

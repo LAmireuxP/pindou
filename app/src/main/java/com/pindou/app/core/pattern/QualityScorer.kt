@@ -75,6 +75,7 @@ object QualityScorer {
         height: Int,
         cells: IntArray,
         paletteArgbs: IntArray,
+        pixelArt: Boolean = false,
     ): QualityReport {
         if (width <= 0 || height <= 0 || cells.size != width * height) return QualityReport.EMPTY
 
@@ -159,7 +160,11 @@ object QualityScorer {
         val colorCount = used.count { it }
 
         return QualityReport(
-            score = scoreOf(meanExcess, p90, breakRate, flattenRate, colorCount),
+            score = if (pixelArt) {
+                artScoreOf(mean, p90, colorCount)
+            } else {
+                scoreOf(meanExcess, p90, breakRate, flattenRate, colorCount)
+            },
             meanDeltaE = mean,
             p90DeltaE = p90,
             colorCount = colorCount,
@@ -167,6 +172,20 @@ object QualityScorer {
             flattenRate = flattenRate,
             emptyRatio = 1.0 - counted.toDouble() / cells.size,
         )
+    }
+
+    /**
+     * 像素画口径：源图本来就是离散色块，没有"照片纹理要不要抹平"这回事。
+     * 逐画像素映射后仍扣碎点/糊边，等于把"色卡里没有这个豆色"的客观
+     * 限制算成转换器的错——一张还原得很准的原画会被打成 36 分"失真明显"。
+     * 这里只按逐格色差打分：均差 5.6、p90 12.7 对应 79 分（还原良好）。
+     *
+     * 超出 40 色的部分不再扣分：像素画原图的配色数由作者决定，压色才是失真。
+     */
+    private fun artScoreOf(mean: Double, p90: Double, colorCount: Int): Int {
+        val colorLoss = mean * 3.0 + p90 * 0.3
+        val paletteLoss = if (colorCount > 40) ((colorCount - 40) * 0.2).coerceAtMost(4.0) else 0.0
+        return (100.0 - colorLoss - paletteLoss).roundToInt().coerceIn(0, 99)
     }
 
     /** 色卡里离 ref 最近的色号，返回其 CIEDE2000；调色板为空返回 0 */

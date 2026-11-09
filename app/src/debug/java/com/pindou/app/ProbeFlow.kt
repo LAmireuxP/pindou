@@ -48,7 +48,9 @@ object ProbeFlow {
 
         vm.confirmCrop()
         waitUntil(5_000) { vm.screen == Screen.PARAMS }
-        vm.setGridWidthPreset(78)
+        say("artGrid=${vm.pixelArtGrid} crop=${vm.cropRect}")
+        // 像素画按原画网格生成（56×50），照片按 78 宽推导高度
+        if (vm.pixelArtGrid != null) vm.applyArtGrid() else vm.setGridWidthPreset(78)
         sleep(900)
         say("grid=${vm.gridW}x${vm.gridH} palette=${vm.selectedPalette?.brand}")
         shot("02_params")

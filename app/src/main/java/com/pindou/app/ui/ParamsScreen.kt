@@ -151,6 +151,34 @@ fun ParamsScreen(vm: AppViewModel) {
         ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 Text("网格尺寸", style = MaterialTheme.typography.titleLarge)
+                // 像素画原图：把「原画网格」放在最前面，一键就是 56×50。
+                // 用户不需要理解块长检测，只需要知道"这张图原本就是 56×50 个画像素"。
+                vm.pixelArtGrid?.let { (aw, ah) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "检测到像素画原图 · 原画 ${aw}×${ah}",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Text(
+                                "先还原画像素再落格，颜色不会被白底稀释",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        ShChip(
+                            text = "套用原画",
+                            selected = vm.gridW == aw && vm.gridH == ah,
+                            onClick = {
+                                preset = "原画"
+                                vm.applyArtGrid()
+                            },
+                        )
+                    }
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -198,7 +226,7 @@ fun ParamsScreen(vm: AppViewModel) {
                     Row(horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
                         OutlinedTextField(
                             value = vm.gridW.toString(),
-                            onValueChange = { v -> v.toIntOrNull()?.let { vm.setGridSize(it, vm.gridH) } },
+                            onValueChange = { v -> v.toIntOrNull()?.let { vm.setGridWidthInput(it) } },
                             label = { Text("宽") },
                             modifier = Modifier.widthIn(min = 100.dp),
                             shape = RoundedCornerShape(8.dp),
@@ -206,13 +234,41 @@ fun ParamsScreen(vm: AppViewModel) {
                         )
                         OutlinedTextField(
                             value = vm.gridH.toString(),
-                            onValueChange = { v -> v.toIntOrNull()?.let { vm.setGridSize(vm.gridW, it) } },
+                            onValueChange = { v -> v.toIntOrNull()?.let { vm.setGridHeightInput(it) } },
                             label = { Text("高") },
                             modifier = Modifier.widthIn(min = 100.dp),
                             shape = RoundedCornerShape(8.dp),
                             singleLine = true,
                         )
                     }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
+                        Text(
+                            "保持宽高比",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = vm.lockGridAspect,
+                            onCheckedChange = { vm.toggleGridAspectLock() },
+                        )
+                    }
+                    Text(
+                        if (vm.lockGridAspect) {
+                            "改一边自动推另一边（比例 %.3f），图案不会被拉扁".format(
+                                if (vm.imageW > 0 && vm.imageH > 0) {
+                                    (vm.pixelArtGrid?.let { it.first.toDouble() / it.second }
+                                        ?: (vm.imageW.toDouble() / vm.imageH))
+                                } else 1.0,
+                            )
+                        } else {
+                            "已解锁：宽高独立输入会按不同比例拉伸图案"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 Text(
                     "共 ${vm.gridW * vm.gridH} 粒豆子",

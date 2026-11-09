@@ -32,6 +32,8 @@ data class PatternResult(
     val quality: QualityReport = QualityReport.EMPTY,
     /** 生成时用的过滤档位，回显给 UI（自动优选后告诉用户选了哪档） */
     val filterLevel: FilterLevel = FilterLevel.MEDIUM,
+    /** 源图被识别成像素画：图纸是逐画像素还原的，质量口径与照片不同 */
+    val pixelArt: Boolean = false,
 ) {
     /** 各色号用量（索引 → 数量），按数量降序 */
     fun usage(): List<Pair<Int, Int>> {
@@ -222,6 +224,7 @@ object PatternGenerator {
         val quality = QualityScorer.score(
             refSample, options.gridW, options.gridH, cleaned,
             palette.colors.map { it.argb }.toIntArray(),
+            pixelArt = art != null,
         )
 
         val result = PatternResult(
@@ -229,6 +232,7 @@ object PatternGenerator {
             (System.nanoTime() - startNanos) / 1_000_000,
             quality = quality,
             filterLevel = options.filterLevel,
+            pixelArt = art != null,
         )
         onStage(GenerationStage.DONE, 1f)
         return result
