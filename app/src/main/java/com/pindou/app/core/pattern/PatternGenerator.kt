@@ -81,12 +81,23 @@ object PatternGenerator {
         )
         onStage(GenerationStage.DOWNSAMPLE, 1f)
 
+        // 像素画原图走独立支路：源图本来就是离散色块，任何"平滑/众数/区域合并"
+        // 都会把 1~2 格宽的花瓣、眼白直接抹掉。这里只做两件事——按面积加权
+        // 压色号数、按色号面积多数落格。target 网格上的 argb 只留给背景移除用。
+        val art = sample.art
+
         // ② 细节掩码：与邻域均值色差大的格子（眼睛、嘴、高光）锁定。
         //    必须在量化前算好，量化阶段用它回填原始采样色。
+        //    像素画支路不需要：它本身就没有"照片纹理"，回填只会让同一片花瓣里
+        //    出现两三种粉（簇色号 + 原始最近色）。
         val detailThreshold = options.detailThreshold ?: options.filterLevel.detailThreshold
-        val detail = ImagePreprocessor.detailMask(
-            sample, options.gridW, options.gridH, threshold = detailThreshold,
-        )
+        val detail: BooleanArray? = if (art != null) {
+            null
+        } else {
+            ImagePreprocessor.detailMask(
+                sample, options.gridW, options.gridH, threshold = detailThreshold,
+            )
+        }
 
         // ③ 色卡映射：抖动走逐格误差扩散；默认走 Lab 聚类量化。
         //    量化先把整图归成 K 个色簇，同一片区域共享一个色号，这是
@@ -97,6 +108,13 @@ object PatternGenerator {
             mapped = FloydSteinbergDitherer.dither(
                 sample.argb, options.gridW, options.gridH,
                 FloydSteinbergDitherer.FromPalette(palette),
+            )
+            onStage(GenerationStage.MAP, 1f)
+        } else if (art != null) {
+            onStage(GenerationStage.MAP, 0f)
+            mapped = ArtQuantizer.quantize(
+                art, options.gridW, options.gridH, palette,
+                options.filterLevel.artMaxColors, options.excludedCodes,
             )
             onStage(GenerationStage.MAP, 1f)
         } else {
@@ -125,12 +143,12 @@ object PatternGenerator {
         onStage(GenerationStage.CLEAN, 0f)
         var cleaned = ImagePreprocessor.modeFilter(
             cells, options.gridW, options.gridH, palette.colors.size,
-            options.filterLevel.modePasses, detail,
+            if (art != null) 0 else options.filterLevel.modePasses, detail,
         )
 
         // ⑤ 小区域合并：面积占比低于档位阈值的同色连通块并入最大邻块，
         //    细节格所在区域整块保留。复杂度 O(格数)。
-        if (options.regionCleanupEnabled && options.filterLevel.regionFraction > 0.0) {
+        if (art == null && options.regionCleanupEnabled && options.filterLevel.regionFraction > 0.0) {
             val autoMin = (options.gridW * options.gridH * options.filterLevel.regionFraction)
                 .roundToInt()
                 .coerceIn(3, 64)
@@ -155,7 +173,7 @@ object PatternGenerator {
         }
 
         // ⑥b 孤立像素兜底：众数滤波后仍残留的、全图出现 ≤3 次的单格
-        if (options.cleanupEnabled) {
+        if (art == null && options.cleanupEnabled) {
             cleaned = IsolatedPixelCleaner.clean(
                 cleaned, options.gridW, options.gridH,
                 paletteArgbs = palette.colors.map { it.argb },

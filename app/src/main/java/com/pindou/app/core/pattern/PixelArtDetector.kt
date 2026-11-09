@@ -35,7 +35,12 @@ object PixelArtDetector {
     /** 横竖块尺寸允许的相对偏差（非整数倍缩放会让两者差 1~2px） */
     private const val AXIS_TOLERANCE = 0.25
 
-    data class Result(val block: Int, val artW: Int, val artH: Int)
+    /**
+     * @param block 画像素边长（源图像素）
+     * @param ox/oy 画像素网格相对源图左上角的偏移。放大过的像素画常带白边或
+     *              半格错位，不校正偏移会让每一格都压在块边界上。
+     */
+    data class Result(val block: Int, val artW: Int, val artH: Int, val ox: Int, val oy: Int)
 
     fun detect(pixels: IntArray, srcW: Int, srcH: Int): Result? {
         if (srcW < 32 || srcH < 32) return null
@@ -50,12 +55,94 @@ object PixelArtDetector {
         val by = peakBlock(vRuns.first, vRuns.second) ?: return null
         val diff = abs(bx - by).toDouble() / max(bx, by)
         if (diff > AXIS_TOLERANCE) return null
-        val block = ((bx + by) / 2.0).roundToInt().coerceIn(MIN_BLOCK, MAX_BLOCK)
-        val artW = (srcW.toDouble() / block).roundToInt()
-        val artH = (srcH.toDouble() / block).roundToInt()
+        val hint = ((bx + by) / 2.0).roundToInt().coerceIn(MIN_BLOCK, MAX_BLOCK)
+        // 直方图峰值只是"块内平坦段"的长度：块与块之间的过渡带（缩放/JPEG
+        // 造成的 2~4px 斜坡）不计入 run，所以峰值系统性地偏小——本例真实
+        // 块长 11.8px，峰值落在 9。用"块内纯度"把真实块长找回来：格子正好
+        // 落在一个画像素里时，块内众数占比 ≈ 0.9；跨到边界时掉到 0.6 以下。
+        var bestBlock = hint
+        var bestOx = 0
+        var bestOy = 0
+        var bestScore = -1.0
+        for (b in hint..(hint + 8)) {
+            if (b > MAX_BLOCK) break
+            for (ox in 0 until min(b, 7) step 2) {
+                for (oy in 0 until min(b, 7) step 2) {
+                    val score = gridPurity(pixels, srcW, srcH, b, ox, oy)
+                    if (score > bestScore) {
+                        bestScore = score
+                        bestBlock = b
+                        bestOx = ox
+                        bestOy = oy
+                    }
+                }
+            }
+        }
+        // 偏移精修到 1px
+        for (dx in -1..1) for (dy in -1..1) {
+            val ox = (bestOx + dx).coerceAtLeast(0)
+            val oy = (bestOy + dy).coerceAtLeast(0)
+            val score = gridPurity(pixels, srcW, srcH, bestBlock, ox, oy)
+            if (score > bestScore) { bestScore = score; bestOx = ox; bestOy = oy }
+        }
+        val artW = (srcW - bestOx) / bestBlock
+        val artH = (srcH - bestOy) / bestBlock
         if (artW < 8 || artH < 8) return null
-        return Result(block, artW, artH)
+        return Result(bestBlock, artW, artH, bestOx, bestOy)
     }
+
+    /**
+     * 网格纯度：抽样 [SAMPLE_CELLS] 个格子，统计"格内最多的那个颜色"
+     * 占该格像素的比例，取平均。格子与画像素对齐度越高，这个值越接近 1。
+     *
+     * 只取格内缩 20% 的区域，边界过渡带本来就不该参与。
+     */
+    private fun gridPurity(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        block: Int,
+        ox: Int,
+        oy: Int,
+    ): Double {
+        val aw = (srcW - ox) / block
+        val ah = (srcH - oy) / block
+        if (aw < 8 || ah < 8) return -1.0
+        val total = aw * ah
+        val step = max(1, total / SAMPLE_CELLS)
+        var sum = 0.0
+        var used = 0
+        var idx = 0
+        while (idx < total) {
+            val ax = idx % aw
+            val ay = idx / aw
+            idx += step
+            val x0 = (ox + ax * block).toDouble()
+            val x1 = x0 + block
+            val y0 = (oy + ay * block).toDouble()
+            val y1 = y0 + block
+            val sx0 = (x0 + (x1 - x0) * 0.2).toInt().coerceIn(0, srcW - 1)
+            val sx1 = (x1 - (x1 - x0) * 0.2).toInt().coerceIn(sx0, srcW - 1)
+            val sy0 = (y0 + (y1 - y0) * 0.2).toInt().coerceIn(0, srcH - 1)
+            val sy1 = (y1 - (y1 - y0) * 0.2).toInt().coerceIn(sy0, srcH - 1)
+            val hist = HashMap<Int, Int>()
+            var n = 0
+            for (y in sy0..sy1) {
+                for (x in sx0..sx1) {
+                    val p = pixels[y * srcW + x] and 0xF0F0F0
+                    hist.merge(p, 1, Int::plus)
+                    n++
+                }
+            }
+            if (n == 0) continue
+            sum += (hist.values.maxOrNull() ?: 0).toDouble() / n
+            used++
+        }
+        return if (used == 0) 0.0 else sum / used
+    }
+
+    /** 纯度评估的抽样格数：再多也只是让结果更稳，200 个已足够区分档位 */
+    private const val SAMPLE_CELLS = 240
 
     /** 连续同色长度直方图；只按 [lineStep] 抽线，线内逐像素比较 */
     private fun runHistogram(

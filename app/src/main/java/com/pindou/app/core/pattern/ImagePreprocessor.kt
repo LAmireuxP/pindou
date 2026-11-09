@@ -28,19 +28,32 @@ enum class FilterLevel(
     val regionFraction: Double,
     val regionKeepDeltaE: Double,
     val detailThreshold: Double,
+    /** 像素画支路的用色上限：源图本身已是离散色块，按面积加权聚类压到这个数 */
+    val artMaxColors: Int,
 ) {
     // 簇数按"图面还剩下多少独立色块"递减：照片的纹理色在 64 簇下已
     // 明显成片，再少就会把相邻材质的边界也吞掉。
     // regionKeepDeltaE 放得比较宽：真实细节已由细节掩码锁定，
     // 小区域阶段的任务就是把跨色阶的碎点也并掉（颂拼豆同样不按色差豁免）。
-    NONE("无过滤", 64, 0, 0, 0.00035, 45.0, 22.0),
-    LOW("低过滤", 44, 1, 1, 0.0016, 35.0, 20.0),
-    MEDIUM("中过滤", 30, 1, 2, 0.0030, 30.0, 18.0),
-    HIGH("高过滤", 20, 2, 3, 0.0045, 25.0, 16.0),
+    // 像素画支路 0 = 不做聚类，逐画像素直接映射色卡（保留原图每一层配色）
+    NONE("无过滤", 64, 0, 0, 0.00035, 45.0, 22.0, 0),
+    LOW("低过滤", 44, 1, 1, 0.0016, 35.0, 20.0, 36),
+    MEDIUM("中过滤", 30, 1, 2, 0.0030, 30.0, 18.0, 28),
+    HIGH("高过滤", 20, 2, 3, 0.0045, 25.0, 16.0, 22),
 }
 
+/**
+ * 像素画还原出来的画像素网格。
+ *
+ * 与目标网格分开保存：目标是"豆子网格"，画像素是"源图的真实色块"。
+ * 量化要按画像素的**面积权重**做，而不是按目标格数——目标格是均匀的，
+ * 一颗只占 2 格的深色眼珠和一片 2000 格的白底在 k-means 里权重相同，
+ * 簇心就会被大片浅色拉走。
+ */
+class ArtGrid(val argb: IntArray, val w: Int, val h: Int)
+
 /** 采样结果：每格 ARGB + 每格 Lab（三个 float 一组，下游免重复转换） */
-class GridSample(val argb: IntArray, val lab: FloatArray) {
+class GridSample(val argb: IntArray, val lab: FloatArray, val art: ArtGrid? = null) {
     val size: Int get() = argb.size
 }
 
@@ -58,6 +71,9 @@ class GridSample(val argb: IntArray, val lab: FloatArray) {
 object ImagePreprocessor {
 
     private const val SCALE = 2
+
+    /** 单块众数统计的桶数上限：一块里出现 24 种以上颜色说明检测本身不可信 */
+    private const val MODE_BUCKETS = 24
 
     fun sample(
         pixels: IntArray,
@@ -165,26 +181,60 @@ object ImagePreprocessor {
         val aw = art.artW
         val ah = art.artH
         val artR = IntArray(aw * ah)
-        // 每个画像素取中心 3×3 均值：块内本来就是同色，这一步只是压 JPEG 振铃
+        // 每个画像素取"内部区域众数"，不是均值。
+        //
+        // 为什么：源图是放大过的像素画，缩放会把块边界糊成 4~6px 的过渡带；
+        // 块尺寸又常常不是整数（本例 801/68 = 11.78），中心取样会周期性落到
+        // 过渡带上，均值把相邻两色混成源图不存在的灰粉，整圈花瓣随之发白、
+        // 变薄。众数只会选中块内真正占多数的那个颜色，过渡带再宽也不会污染。
+        // 只取块内缩 25% 的区域，边界过渡带直接不参与统计。
         for (ay in 0 until ah) {
-            val cy = ((ay + 0.5) * srcH / ah).toInt().coerceIn(0, srcH - 1)
+            val y0 = (art.oy + ay * art.block).toDouble()
+            val y1 = y0 + art.block
+            val sy0 = (y0 + (y1 - y0) * 0.25).toInt().coerceIn(0, srcH - 1)
+            val sy1 = (y1 - (y1 - y0) * 0.25).toInt().coerceIn(sy0, srcH - 1)
             for (ax in 0 until aw) {
-                val cx = ((ax + 0.5) * srcW / aw).toInt().coerceIn(0, srcW - 1)
+                val x0 = (art.ox + ax * art.block).toDouble()
+                val x1 = x0 + art.block
+                val sx0 = (x0 + (x1 - x0) * 0.25).toInt().coerceIn(0, srcW - 1)
+                val sx1 = (x1 - (x1 - x0) * 0.25).toInt().coerceIn(sx0, srcW - 1)
+                // 桶 = 每通道丢低 3 位；同色块的 JPEG 抖动落在同一桶
+                val keys = IntArray(MODE_BUCKETS)
+                val bc = IntArray(MODE_BUCKETS)
+                var used = 0
+                for (yy in sy0..sy1) {
+                    for (xx in sx0..sx1) {
+                        val p = pixels[yy * srcW + xx]
+                        val key = p and 0xF8F8F8
+                        var slot = -1
+                        for (s in 0 until used) if (keys[s] == key) { slot = s; break }
+                        if (slot < 0) {
+                            if (used == MODE_BUCKETS) break
+                            slot = used++
+                            keys[slot] = key
+                        }
+                        bc[slot]++
+                    }
+                }
+                var best = 0
+                for (s in 1 until used) if (bc[s] > bc[best]) best = s
+                // 胜出桶内取均值：块内本来同色，均值只是把抖动收回到真实值
+                val key = keys[best]
                 var sr = 0
                 var sg = 0
                 var sb = 0
                 var cnt = 0
-                for (dy in -1..1) {
-                    val yy = (cy + dy).coerceIn(0, srcH - 1)
-                    for (dx in -1..1) {
-                        val xx = (cx + dx).coerceIn(0, srcW - 1)
+                for (yy in sy0..sy1) {
+                    for (xx in sx0..sx1) {
                         val p = pixels[yy * srcW + xx]
+                        if ((p and 0xF8F8F8) != key) continue
                         sr += (p shr 16) and 0xFF
                         sg += (p shr 8) and 0xFF
                         sb += p and 0xFF
                         cnt++
                     }
                 }
+                if (cnt == 0) cnt = 1
                 artR[ay * aw + ax] =
                     (0xFF shl 24) or ((sr / cnt) shl 16) or ((sg / cnt) shl 8) or (sb / cnt)
             }
@@ -210,15 +260,17 @@ object ImagePreprocessor {
                 java.util.Arrays.fill(gsum, 0.0)
                 java.util.Arrays.fill(bsum, 0.0)
                 java.util.Arrays.fill(wsum, 0.0)
-                val ay0 = ((y0 * ah / srcH).toInt()).coerceIn(0, ah - 1)
-                val ay1 = ((y1 * ah / srcH - 1e-9).toInt()).coerceIn(0, ah - 1)
-                val ax0 = ((x0 * aw / srcW).toInt()).coerceIn(0, aw - 1)
-                val ax1 = ((x1 * aw / srcW - 1e-9).toInt()).coerceIn(0, aw - 1)
+                val ay0 = (((y0 - art.oy) / art.block).toInt()).coerceIn(0, ah - 1)
+                val ay1 = (((y1 - art.oy) / art.block - 1e-9).toInt()).coerceIn(0, ah - 1)
+                val ax0 = (((x0 - art.ox) / art.block).toInt()).coerceIn(0, aw - 1)
+                val ax1 = (((x1 - art.ox) / art.block - 1e-9).toInt()).coerceIn(0, aw - 1)
                 for (ay in ay0..ay1) {
-                    val oy = min(y1, (ay + 1) * srcH.toDouble() / ah) - max(y0, ay * srcH.toDouble() / ah)
+                    val oy = min(y1, art.oy + (ay + 1.0) * art.block) -
+                        max(y0, art.oy + ay.toDouble() * art.block)
                     if (oy <= 0) continue
                     for (ax in ax0..ax1) {
-                        val ox = min(x1, (ax + 1) * srcW.toDouble() / aw) - max(x0, ax * srcW.toDouble() / aw)
+                        val ox = min(x1, art.ox + (ax + 1.0) * art.block) -
+                            max(x0, art.ox + ax.toDouble() * art.block)
                         if (ox <= 0) continue
                         val wgt = ox * oy
                         val p = artR[ay * aw + ax]
@@ -257,7 +309,7 @@ object ImagePreprocessor {
             lab[i * 3 + 1] = l[1]
             lab[i * 3 + 2] = l[2]
         }
-        return GridSample(argb, lab)
+        return GridSample(argb, lab, ArtGrid(artR, aw, ah))
     }
 
     /**

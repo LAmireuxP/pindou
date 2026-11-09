@@ -161,7 +161,7 @@ object LabQuantizer {
     private const val SHORTLIST = 8
 
     /** 取离 [center] 最近且未被排除的 [SHORTLIST] 个色号（插入式选择，O(色卡×候选)） */
-    private fun pickShortlist(
+    internal fun pickShortlist(
         palette: BeadPalette,
         center: FloatArray,
         excludedCodes: Set<String>,
