@@ -1,27 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  自适应图标背景：奶油粉底。135° 线性渐变 + 左上角柔光，给淡色豆块一层暖调衬底，
-  深色模式下也不会压成黑块（系统不回退深色，靠前景自重）。
+  自适应图标背景：纯白 #FFFFFF。与参考图标一致，颜色全部交给前景的渐变线，系统深色模式下也不会反色压成黑块。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:pathData="M0,0 h108 v108 h-108 z">
-        <aapt:attr name="android:fillColor">
-            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="108" android:endY="108">
-                <item android:color="#FFFFFDFB" android:offset="0" />
-                <item android:color="#FFFFF2F6" android:offset="0.62" />
-                <item android:color="#FFFBF4FF" android:offset="1" />
-            </gradient>
-        </aapt:attr>
-    </path>
-    <path android:pathData="M0,0 h108 v108 h-108 z">
-        <aapt:attr name="android:fillColor">
-            <gradient android:type="radial" android:centerX="30" android:centerY="26" android:gradientRadius="82">
-                <item android:color="#66FFFFFF" android:offset="0" />
-                <item android:color="#00FFFFFF" android:offset="1" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M0,0 h108 v108 h-108 z" />
 </vector>
