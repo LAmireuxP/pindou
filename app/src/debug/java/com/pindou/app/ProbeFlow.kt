@@ -94,6 +94,18 @@ object ProbeFlow {
         waitUntil(5_000) { vm.screen == Screen.PREVIEW }
         sleep(1200)
         shot("06_preview_bg_on")
+
+        // 导出 PNG 专项：拉回电脑看色号标注的清晰度
+        val pages = vm.currentPages()
+        val exported = com.pindou.app.core.export.ExportService.exportPng(
+            activity, pages, "probe_cat", symbol = false,
+        )
+        say("export=$exported")
+        // PDF 同源验证：横向 A4 + 高分辨率位图 + Canvas 色号
+        val pdf = com.pindou.app.core.export.ExportService.exportPdf(
+            activity, pages, "probe_cat",
+        )
+        say("pdf=$pdf")
     }
 
     private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {

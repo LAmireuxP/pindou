@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.core.content.FileProvider
@@ -34,29 +35,39 @@ object ExportService {
         // 每页独立渲染（含标题栏），纵向拼接成一张长图
         val parts = results.mapIndexed { pageIndex, r ->
             val cellPx = defaultCellPx(r)
-            val titleHeight = if (symbol) 0 else (cellPx * 1.6f).toInt()
+            val titleHeight = if (symbol) 0 else titleBarHeight(cellPx)
             val rendered = if (symbol) {
-                ExportRenderer.renderSymbol(r, ExportRenderer.RenderOptions(cellPx = cellPx))
+                ExportRenderer.renderSymbol(
+                    r,
+                    ExportRenderer.RenderOptions(cellPx = cellPx, showCodes = false),
+                )
             } else {
                 ExportRenderer.renderPattern(
                     r,
                     ExportRenderer.RenderOptions(
                         cellPx = cellPx,
-                        showCodes = true,
+                        // 色号不走位图点阵字：位图字体只有 7px 高，放大后仍糊，
+                        // 统一改由 Android Canvas 用系统字体在最终分辨率上绘制
+                        showCodes = false,
                         showGrid = true,
                         titleHeightPx = titleHeight,
                     ),
                 )
             }
             val bmp = rendered.toBitmap()
-            if (!symbol) {
+            if (symbol) {
+                drawSymbolLabels(bmp, r, cellPx)
+            } else {
                 val pageTag = if (results.size > 1) "  ·  第${pageIndex + 1}/${results.size}页" else ""
                 drawTitleBar(
                     bmp,
                     titleHeight,
                     "$projectName  ·  ${r.palette.brandLabel}  ·  ${r.width}×${r.height}$pageTag",
-                    "共 ${r.cells.size} 格 / ${r.usage().size} 色",
+                    // 只统计实际出豆的格子：开背景移除后 cells.size 仍是整幅网格，
+                    // 拿它当"共 N 格"会把人吓一跳（样例图 5460 实际 3131）
+                    "共 ${r.cells.count { it >= 0 }} 格 / ${r.usage().size} 色",
                 )
+                drawCellCodes(bmp, r, cellPx, titleHeight)
             }
             bmp
         }
@@ -178,22 +189,29 @@ object ExportService {
     ): Exported = runCatching {
         require(results.isNotEmpty()) { "无页数据" }
 
-        // A4 @ 72dpi = 595 x 842 pt
-        val pageW = 595
-        val pageH = 842
+        // A4 @ 72dpi = 595 x 842 pt；宽图纸用横向，格子能放大约 45%，
+        // 打印出来的色号才不是一排小点（纸张方向随图纸长宽比自动选）。
+        val portraitW = 595
+        val portraitH = 842
         val doc = PdfDocument()
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
         var docPageIndex = 0
         for ((idx, r) in results.withIndex()) {
-            val cellPx = defaultCellPx(r)
-            val titleHeight = (cellPx * 1.6f).toInt()
+            val landscape = r.width >= r.height
+            val pageW = if (landscape) portraitH else portraitW
+            val pageH = if (landscape) portraitW else portraitH
+            // PDF 内嵌的是位图：按 A4 宽度缩放后 1 格只剩 2~3pt，
+            // 用屏幕档 cellPx 打印出来色号必然糊。这里按打印分辨率单独放大，
+            // 保证每格文字落纸后仍有约 1mm 高（300dpi 下 ~12px）。
+            val cellPx = pdfCellPx(r)
+            val titleHeight = titleBarHeight(cellPx)
             val patternBmp = ExportRenderer
                 .renderPattern(
                     r,
                     ExportRenderer.RenderOptions(
                         cellPx = cellPx,
-                        showCodes = true,
+                        showCodes = false,
                         showGrid = true,
                         titleHeightPx = titleHeight,
                     ),
@@ -204,8 +222,9 @@ object ExportService {
                 patternBmp,
                 titleHeight,
                 "$projectName  ·  ${r.palette.brandLabel}  ·  ${r.width}×${r.height}$pageTag",
-                "共 ${r.cells.size} 格 / ${r.usage().size} 色",
+                "共 ${r.cells.count { it >= 0 }} 格 / ${r.usage().size} 色",
             )
+            drawCellCodes(patternBmp, r, cellPx, titleHeight)
 
             // 按内容切分：整幅图纸若超过一页，按页高切片
             val contentW = patternBmp.width
@@ -229,7 +248,9 @@ object ExportService {
             patternBmp.recycle()
         }
 
-        // 清单页
+        // 清单页固定纵向
+        val pageW = portraitW
+        val pageH = portraitH
         val listPage = doc.startPage(
             PdfDocument.PageInfo.Builder(pageW, pageH, docPageIndex + 1).create(),
         )
@@ -267,19 +288,26 @@ object ExportService {
         if (titleHeight <= 0) return
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.parseColor("#1A1A1A")
+            color = android.graphics.Color.parseColor("#171717")
             isFakeBoldText = true
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
-        val titleSize = (titleHeight * 0.42f).coerceAtLeast(10f)
-        val subSize = (titleHeight * 0.30f).coerceAtLeast(8f)
+        val padX = titleHeight * 0.24f
+        val titleSize = (titleHeight * 0.32f).coerceAtLeast(11f)
+        val subSize = (titleHeight * 0.21f).coerceAtLeast(9f)
 
+        // 两行都按字体度量定位：先落下 ascent 的绝对值，再用第一行的 descent +
+        // 6% 行距推第二行基线。不同 ROM 默认行高不一致，写死基线会顶出画面。
         paint.textSize = titleSize
-        canvas.drawText(title, titleHeight * 0.2f, titleHeight * 0.48f, paint)
+        val titleBaseline = titleHeight * 0.13f - paint.ascent()
+        canvas.drawText(title, padX, titleBaseline, paint)
+        val titleDescent = paint.descent()
 
         paint.isFakeBoldText = false
-        paint.color = android.graphics.Color.parseColor("#6A6A6A")
+        paint.color = android.graphics.Color.parseColor("#52525B")
         paint.textSize = subSize
-        canvas.drawText(subtitle, titleHeight * 0.2f, titleHeight * 0.85f, paint)
+        val subBaseline = titleBaseline + titleDescent + titleHeight * 0.06f - paint.ascent()
+        canvas.drawText(subtitle, padX, subBaseline, paint)
 
         // 标题栏与图纸之间的分隔线
         val line = Paint().apply {
@@ -287,6 +315,114 @@ object ExportService {
             strokeWidth = 1f
         }
         canvas.drawLine(0f, titleHeight.toFloat(), bitmap.width.toFloat(), titleHeight.toFloat(), line)
+    }
+
+    /**
+     * 色号标注：系统字体 + 抗锯齿，在最终像素分辨率上绘制。
+     * 字号按格子高度 46% 取，宽度超格再等比缩；底色深浅自动切黑/白字。
+     * 复杂度 O(格数)，78×70 约 5500 次 drawText，几十毫秒。
+     */
+    private fun drawCellCodes(bitmap: Bitmap, r: PatternResult, cell: Int, titleHeight: Int) {
+        if (cell < 16) return
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+        }
+        // 46% 格高是「两字符刚好不贴边」的上限；再大就会压到网格线。
+        // 宽度按 measureText 实测收敛，色号 3 字符（如 A01 之外的 3 位码）自动缩字。
+        val baseSize = cell * 0.46f
+        val maxWidth = cell * 0.88f
+        for (gy in 0 until r.height) {
+            for (gx in 0 until r.width) {
+                val idx = r.cells[gy * r.width + gx]
+                if (idx < 0) continue
+                val color = r.palette.colors[idx]
+                paint.textSize = baseSize
+                val measured = paint.measureText(color.code)
+                if (measured > maxWidth) {
+                    paint.textSize = baseSize * maxWidth / measured
+                }
+                paint.color = codeTextColor(color.argb)
+                val cx = gx * cell + cell / 2f
+                val cy = titleHeight + gy * cell + cell / 2f
+                // 基线按字体度量居中，避免不同字号的数字上下偏移
+                val baseline = cy - (paint.ascent() + paint.descent()) / 2f
+                canvas.drawText(color.code, cx, baseline, paint)
+            }
+        }
+    }
+
+    /**
+     * 符号版标注：格子符号（大）+ 色号（小）+ 底部对照表，同样走系统字体。
+     * 符号分配规则必须与 ExportRenderer.renderSymbol 完全一致：
+     * usage() 按用量降序，第 i 个颜色拿 SYMBOLS[i % size]。
+     */
+    private fun drawSymbolLabels(bitmap: Bitmap, r: PatternResult, cell: Int) {
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+        val usedIndices = r.usage().map { it.first }
+        val symbolOf = HashMap<Int, Char>(usedIndices.size)
+        usedIndices.forEachIndexed { i, colorIdx ->
+            symbolOf[colorIdx] = ExportRenderer.SYMBOLS[i % ExportRenderer.SYMBOLS.size]
+        }
+
+        // 标题
+        paint.textAlign = Paint.Align.LEFT
+        paint.color = 0xFF333333.toInt()
+        paint.textSize = (cell * 0.55f).coerceAtLeast(14f)
+        paint.isFakeBoldText = true
+        canvas.drawText("SYMBOL CHART", cell * 0.25f, cell * 0.68f, paint)
+        paint.isFakeBoldText = false
+
+        // 每格：符号居中偏上，色号贴底
+        val titleH = cell
+        val symSize = cell * 0.52f
+        val codeSize = (cell * 0.26f).coerceAtLeast(9f)
+        for (gy in 0 until r.height) {
+            for (gx in 0 until r.width) {
+                val idx = r.cells[gy * r.width + gx]
+                if (idx < 0) continue
+                val sym = symbolOf[idx] ?: continue
+                val cx = gx * cell + cell / 2f
+                val top = titleH + gy * cell
+                paint.textAlign = Paint.Align.CENTER
+                paint.color = 0xFF333333.toInt()
+                paint.textSize = symSize
+                canvas.drawText(sym.toString(), cx, top + cell * 0.58f, paint)
+                if (cell >= 24) {
+                    paint.textSize = codeSize
+                    paint.color = 0xFF6A6A6A.toInt()
+                    canvas.drawText(
+                        r.palette.colors[idx].code,
+                        cx,
+                        top + cell - cell * 0.12f,
+                        paint,
+                    )
+                }
+            }
+        }
+
+        // 对照表：4 列，行高 cell/2，与 renderSymbol 布局一致
+        val legendTop = r.height * cell + titleH + cell / 2
+        val colW = bitmap.width / 4
+        paint.textAlign = Paint.Align.LEFT
+        paint.textSize = (cell * 0.32f).coerceAtLeast(10f)
+        paint.color = 0xFF333333.toInt()
+        usedIndices.forEachIndexed { i, colorIdx ->
+            val col = i % 4
+            val row = i / 4
+            val x = col * colW + cell / 3 + 8f
+            val y = legendTop + row * (cell / 2)
+            canvas.drawText(
+                "${symbolOf[colorIdx]} ${r.palette.colors[colorIdx].code}",
+                x,
+                y + cell * 0.34f,
+                paint,
+            )
+        }
     }
 
     /** 分享纯文本清单 */
@@ -321,10 +457,37 @@ object ExportService {
     }
 
     private fun defaultCellPx(result: PatternResult): Int = when {
-        result.width <= 32 -> 64
-        result.width <= 64 -> 40
-        result.width <= 100 -> 28
-        else -> 20
+        result.width <= 32 -> 88
+        result.width <= 64 -> 60
+        result.width <= 100 -> 48
+        else -> 32
+    }
+
+    /** PDF 专用：比屏幕档再大一截，抵消 A4 缩放 */
+    private fun pdfCellPx(result: PatternResult): Int = when {
+        result.width <= 32 -> 120
+        result.width <= 64 -> 84
+        result.width <= 100 -> 64
+        else -> 44
+    }
+
+    private fun titleBarHeight(cell: Int): Int = (cell * 1.8f).toInt()
+
+    /**
+     * 色号字色：按 WCAG 相对亮度取黑/白里对比度更高的一方。
+     * 直接拿 0.5 亮度切会出现「中灰底 + 深灰字」这种 2:1 的低对比组合。
+     */
+    private fun codeTextColor(argb: Int): Int {
+        fun lin(c: Int): Double {
+            val v = c / 255.0
+            return if (v <= 0.03928) v / 12.92 else Math.pow((v + 0.055) / 1.055, 2.4)
+        }
+        val r = lin((argb shr 16) and 0xFF)
+        val g = lin((argb shr 8) and 0xFF)
+        val b = lin(argb and 0xFF)
+        val lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        // 与黑/白的对比度：(L+0.05)/0.05 与 1.05/(L+0.05)，分界 L≈0.179
+        return if (lum > 0.179) 0xFF1C1C1E.toInt() else 0xFFF7F7F7.toInt()
     }
 
     private fun fileName(result: PatternResult, kind: String, ext: String): String {

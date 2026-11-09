@@ -106,7 +106,11 @@ object ExportRenderer {
         val h = result.height * cell + 1 + titleH + legendH
         val pixels = IntArray(w * h) { 0xFFFFFFFF.toInt() }
 
-        drawTextLine(pixels, w, h, "SYMBOL CHART", 8, titleH / 2 - 8, TEXT_DARK, 2)
+        // 文字（标题/色号/对照表）可由 Android 层用系统字体覆盖绘制，
+        // 纯 JVM 测试与旧调用方仍走内嵌点阵
+        if (options.showCodes) {
+            drawTextLine(pixels, w, h, "SYMBOL CHART", 8, titleH / 2 - 8, TEXT_DARK, 2)
+        }
 
         for (gy in 0 until result.height) {
             for (gx in 0 until result.width) {
@@ -116,7 +120,7 @@ object ExportRenderer {
                 val y0 = gy * cell + titleH
                 // 符号版底色用浅灰，靠色号文字区分（黑白打印机友好）
                 fillRect(pixels, w, h, x0 + 2, y0 + 2, cell - 4, cell - 4, 0xFFF2F2F2.toInt())
-                if (cell >= 24) {
+                if (options.showCodes && cell >= 24) {
                     val code = result.palette.colors[idx].code
                     drawTextLine(
                         pixels, w, h, "${symbolOf[idx]} $code",
@@ -146,8 +150,10 @@ object ExportRenderer {
             val y = legendTop + row * (cell / 2)
             val entry = result.palette.colors[colorIdx]
             drawRectOutline(pixels, w, h, x + 4, y + 2, cell / 3, cell / 3, entry.argb)
-            val label = "${symbolOf[colorIdx]} ${entry.code}"
-            drawTextLine(pixels, w, h, label, x + cell / 3 + 8, y + 2, TEXT_DARK, 1)
+            if (options.showCodes) {
+                val label = "${symbolOf[colorIdx]} ${entry.code}"
+                drawTextLine(pixels, w, h, label, x + cell / 3 + 8, y + 2, TEXT_DARK, 1)
+            }
         }
 
         return RenderedBitmap(w, h, pixels)
