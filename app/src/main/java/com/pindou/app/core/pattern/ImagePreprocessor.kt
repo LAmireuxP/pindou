@@ -71,6 +71,13 @@ object ImagePreprocessor {
         require(srcW > 0 && srcH > 0) { "源图尺寸非法: ${srcW}x$srcH" }
         require(pixels.size >= srcW * srcH) { "像素数 ${pixels.size} < ${srcW}x$srcH" }
 
+        // 像素画原图：先还原到它自己的画像素网格，再按面积多数表决落到目标
+        // 网格。面积平均会把画像素和背景混成中间色，量化后花瓣碎成胡椒面，
+        // 所以这条支路完全绕开平均。
+        PixelArtDetector.detect(pixels, srcW, srcH)?.let { art ->
+            return sampleArt(pixels, srcW, srcH, gridW, gridH, art)
+        }
+
         val iw = gridW * SCALE
         val ih = gridH * SCALE
         val n = iw * ih
@@ -124,6 +131,121 @@ object ImagePreprocessor {
                 val rr = ((r[i00] + r[i01] + r[i10] + r[i11]) * 0.25 + 0.5).toInt().coerceIn(0, 255)
                 val gg = ((g[i00] + g[i01] + g[i10] + g[i11]) * 0.25 + 0.5).toInt().coerceIn(0, 255)
                 val bb = ((b[i00] + b[i01] + b[i10] + b[i11]) * 0.25 + 0.5).toInt().coerceIn(0, 255)
+                argb[gy * gridW + gx] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+            }
+        }
+
+        val lab = FloatArray(argb.size * 3)
+        for (i in argb.indices) {
+            val l = ColorConversions.argbToLab(argb[i])
+            lab[i * 3] = l[0]
+            lab[i * 3 + 1] = l[1]
+            lab[i * 3 + 2] = l[2]
+        }
+        return GridSample(argb, lab)
+    }
+
+    /**
+     * 像素画采样：还原画像素 → 目标格按覆盖面积取"多数色"。
+     *
+     * 取多数色而不是平均色是关键：一格跨两个画像素时，平均会产生源图里
+     * 根本不存在的过渡色（浅粉被白底一稀释就成了灰），色卡只能取到最近的
+     * 脏色；多数表决保证每格输出的都是源图里真实存在的颜色。
+     *
+     * 复杂度 O(画像素数 + 目标格数 × 4)，78×72 网格在毫秒级。
+     */
+    private fun sampleArt(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        gridW: Int,
+        gridH: Int,
+        art: PixelArtDetector.Result,
+    ): GridSample {
+        val aw = art.artW
+        val ah = art.artH
+        val artR = IntArray(aw * ah)
+        // 每个画像素取中心 3×3 均值：块内本来就是同色，这一步只是压 JPEG 振铃
+        for (ay in 0 until ah) {
+            val cy = ((ay + 0.5) * srcH / ah).toInt().coerceIn(0, srcH - 1)
+            for (ax in 0 until aw) {
+                val cx = ((ax + 0.5) * srcW / aw).toInt().coerceIn(0, srcW - 1)
+                var sr = 0
+                var sg = 0
+                var sb = 0
+                var cnt = 0
+                for (dy in -1..1) {
+                    val yy = (cy + dy).coerceIn(0, srcH - 1)
+                    for (dx in -1..1) {
+                        val xx = (cx + dx).coerceIn(0, srcW - 1)
+                        val p = pixels[yy * srcW + xx]
+                        sr += (p shr 16) and 0xFF
+                        sg += (p shr 8) and 0xFF
+                        sb += p and 0xFF
+                        cnt++
+                    }
+                }
+                artR[ay * aw + ax] =
+                    (0xFF shl 24) or ((sr / cnt) shl 16) or ((sg / cnt) shl 8) or (sb / cnt)
+            }
+        }
+
+        val argb = IntArray(gridW * gridH)
+        // 每格最多记录 MAX_VOTES 个不同颜色的累计面积；超出时并入最接近的桶，
+        // 避免为一格分配 32768 长的直方图
+        val MAX_VOTES = 8
+        val keys = IntArray(MAX_VOTES)
+        val wsum = DoubleArray(MAX_VOTES)
+        val rsum = DoubleArray(MAX_VOTES)
+        val gsum = DoubleArray(MAX_VOTES)
+        val bsum = DoubleArray(MAX_VOTES)
+        for (gy in 0 until gridH) {
+            val y0 = gy * srcH.toDouble() / gridH
+            val y1 = (gy + 1) * srcH.toDouble() / gridH
+            for (gx in 0 until gridW) {
+                val x0 = gx * srcW.toDouble() / gridW
+                val x1 = (gx + 1) * srcW.toDouble() / gridW
+                var used = 0
+                java.util.Arrays.fill(rsum, 0.0)
+                java.util.Arrays.fill(gsum, 0.0)
+                java.util.Arrays.fill(bsum, 0.0)
+                java.util.Arrays.fill(wsum, 0.0)
+                val ay0 = ((y0 * ah / srcH).toInt()).coerceIn(0, ah - 1)
+                val ay1 = ((y1 * ah / srcH - 1e-9).toInt()).coerceIn(0, ah - 1)
+                val ax0 = ((x0 * aw / srcW).toInt()).coerceIn(0, aw - 1)
+                val ax1 = ((x1 * aw / srcW - 1e-9).toInt()).coerceIn(0, aw - 1)
+                for (ay in ay0..ay1) {
+                    val oy = min(y1, (ay + 1) * srcH.toDouble() / ah) - max(y0, ay * srcH.toDouble() / ah)
+                    if (oy <= 0) continue
+                    for (ax in ax0..ax1) {
+                        val ox = min(x1, (ax + 1) * srcW.toDouble() / aw) - max(x0, ax * srcW.toDouble() / aw)
+                        if (ox <= 0) continue
+                        val wgt = ox * oy
+                        val p = artR[ay * aw + ax]
+                        // 每通道丢低 3 位做桶键：同色画像素的 JPEG 抖动落在同一桶
+                        val key = p and 0xF8F8F8
+                        var slot = -1
+                        for (s in 0 until used) if (keys[s] == key) { slot = s; break }
+                        if (slot < 0) {
+                            if (used < MAX_VOTES) {
+                                slot = used++
+                                keys[slot] = key
+                            } else {
+                                slot = 0 // 极端跨色情况并入第一桶，不新增分配
+                            }
+                        }
+                        wsum[slot] += wgt
+                        rsum[slot] += ((p shr 16) and 0xFF) * wgt
+                        gsum[slot] += ((p shr 8) and 0xFF) * wgt
+                        bsum[slot] += (p and 0xFF) * wgt
+                    }
+                }
+                var best = 0
+                for (s in 1 until used) if (wsum[s] > wsum[best]) best = s
+                val w = if (wsum[best] > 0) wsum[best] else 1.0
+                val rr = (rsum[best] / w + 0.5).toInt().coerceIn(0, 255)
+                val gg = (gsum[best] / w + 0.5).toInt().coerceIn(0, 255)
+                val bb = (bsum[best] / w + 0.5).toInt().coerceIn(0, 255)
                 argb[gy * gridW + gx] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
             }
         }

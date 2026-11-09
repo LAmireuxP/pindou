@@ -1,7 +1,9 @@
 package com.pindou.app.core.pattern
 
 import com.pindou.app.core.palette.BeadPalette
+import com.pindou.app.core.color.Ciede2000
 import java.util.Random
+import kotlin.math.sqrt
 
 /**
  * Lab 空间 k-means 量化。
@@ -62,17 +64,78 @@ object LabQuantizer {
         val k = fitted.k
         val centers = fitted.centers
 
-        // 每簇映射一次色卡：K ≤ 64 次 CIEDE2000，替代逐格几千次查询
+        // 近白背景归一：证件照、商品图、贴纸图的边缘是浅色渐变，逐簇映射
+        // 会把渐变拆成"白 + 浅灰 + 浅粉"几块，拼出来像脏三角。边缘本身
+        // 就以近白为主时，把所有近白簇统一吸到色卡里最纯的白，图面干净，
+        // 也不影响主体（主体簇的 L/彩度不在近白区间）。
+        val whiteIdx = neutralWhiteIndex(sample, width, height, palette, excludedCodes)
+
+        // 每簇映射一次色卡。不能只取"离簇心最近的那个色号"：一个簇里
+        // 混进少量邻近色（脸部混入深红花瓣）时，簇心会被拉偏，最近色跟着
+        // 跳到更艳的色号，整块脸就偏色。做法是给每簇挑 [SHORTLIST] 个
+        // 候选色号，再让簇内每格投自己最近的那个，取票数最高者——
+        // 等价于簇内众数色，代价 O(K×色卡 + 格数×候选数)。
         val clusterPalette = IntArray(k)
-        for (c in 0 until k) {
-            val center = floatArrayOf(centers[c * 3], centers[c * 3 + 1], centers[c * 3 + 2])
-            var idx = palette.nearestIndex(center, excludedCodes)
-            if (idx < 0) idx = palette.nearestIndex(center) // 全被排除时的兜底
-            clusterPalette[c] = idx
+        run {
+            val shortlist = IntArray(k * SHORTLIST)
+            for (c in 0 until k) {
+                val center = floatArrayOf(centers[c * 3], centers[c * 3 + 1], centers[c * 3 + 2])
+                pickShortlist(palette, center, excludedCodes, shortlist, c * SHORTLIST)
+            }
+            val votes = IntArray(k * SHORTLIST)
+            val cell = FloatArray(3)
+            for (i in 0 until n) {
+                val c = labels[i]
+                val base = c * SHORTLIST
+                var best = 0
+                var bestD = Double.MAX_VALUE
+                cell[0] = lab[i * 3]
+                cell[1] = lab[i * 3 + 1]
+                cell[2] = lab[i * 3 + 2]
+                for (s in 0 until SHORTLIST) {
+                    val idx = shortlist[base + s]
+                    if (idx < 0) continue
+                    val d = Ciede2000.deltaE(cell, palette.colors[idx].lab)
+                    if (d < bestD) {
+                        bestD = d
+                        best = s
+                    }
+                }
+                votes[base + best]++
+            }
+            for (c in 0 until k) {
+                val base = c * SHORTLIST
+                var bestSlot = 0
+                for (s in 1 until SHORTLIST) if (votes[base + s] > votes[base + bestSlot]) bestSlot = s
+                var idx = shortlist[base + bestSlot]
+                if (idx < 0) idx = palette.nearestIndex(
+                    floatArrayOf(centers[c * 3], centers[c * 3 + 1], centers[c * 3 + 2]),
+                )
+                clusterPalette[c] = idx
+            }
         }
 
+        // 逐格近白归一：证件照/贴纸图的背景是"白 + 浅粉渐变"，量化后会被拆成
+        // 白、浅灰、浅粉三块，拼出来是脏三角；而不做归一又会把整圈花托
+        // （同样是浅粉）一起吸成白。所以判据必须带空间信息：离任何高彩度
+        // 格子（花瓣、叶子）都超过 [BG_RADIUS] 格的浅色格子才算背景。
+        val bgDistance = distanceToSaturated(lab, width, height)
         val cells = IntArray(n)
-        for (i in 0 until n) cells[i] = clusterPalette[labels[i]]
+        for (i in 0 until n) {
+            val l = lab[i * 3]
+            val a = lab[i * 3 + 1]
+            val b = lab[i * 3 + 2]
+            val chroma2 = a * a + b * b
+            // 两级判据：真正的中性白（口鼻、眼白、高光）不看位置一律吸白；
+            // 带轻微粉调的浅色（背景光晕）只有离主体足够远才算背景。
+            val pureWhite = l >= 96f && chroma2 <= 36f
+            val bgWhite = bgDistance[i] > BG_RADIUS && l >= 88f && chroma2 <= 256f
+            cells[i] = if (whiteIdx >= 0 && (pureWhite || bgWhite)) {
+                whiteIdx
+            } else {
+                clusterPalette[labels[i]]
+            }
+        }
 
         // 细节回填：只对掩码格做原始色映射，并按 argb 去重缓存
         if (detailMask != null) {
@@ -89,6 +152,141 @@ object LabQuantizer {
             }
         }
         return cells
+    }
+
+    /** 判断"背景"时与最近高彩度格子的距离下限（切比雪夫距离，格） */
+    private const val BG_RADIUS = 3
+
+    /** 每簇参与投票的候选色号数：8 个足够覆盖簇内混色的分裂，再多只是浪费 */
+    private const val SHORTLIST = 8
+
+    /** 取离 [center] 最近且未被排除的 [SHORTLIST] 个色号（插入式选择，O(色卡×候选)） */
+    private fun pickShortlist(
+        palette: BeadPalette,
+        center: FloatArray,
+        excludedCodes: Set<String>,
+        out: IntArray,
+        offset: Int,
+    ) {
+        val dist = DoubleArray(SHORTLIST) { Double.MAX_VALUE }
+        val idxs = IntArray(SHORTLIST) { -1 }
+        for (i in palette.colors.indices) {
+            if (palette.colors[i].code in excludedCodes) continue
+            val d = Ciede2000.deltaE(center, palette.colors[i].lab)
+            if (d >= dist[SHORTLIST - 1]) continue
+            var p = SHORTLIST - 1
+            while (p > 0 && dist[p - 1] > d) {
+                dist[p] = dist[p - 1]
+                idxs[p] = idxs[p - 1]
+                p--
+            }
+            dist[p] = d
+            idxs[p] = i
+        }
+        for (s in 0 until SHORTLIST) out[offset + s] = idxs[s]
+    }
+
+    /** 高彩度阈值（Lab 彩度），花瓣、叶子、主体轮廓都在此之上 */
+    private const val SATURATED_CHROMA = 22f
+
+    /**
+     * 多源 BFS：每格到最近"高彩度格"的 8 邻域距离，超过 [BG_RADIUS] 即封顶。
+     * 只算到半径内，复杂度 O(格数 × 半径²)，78×72 网格可忽略。
+     *
+     * 用距离而不是连通域：背景渐变会从花环缝隙漏进内圈，洪水填充挡不住；
+     * 距离判据只看"离主体多远"，缝隙漏不漏都不影响结果。
+     */
+    private fun distanceToSaturated(lab: FloatArray, width: Int, height: Int): IntArray {
+        val n = width * height
+        val dist = IntArray(n) { -1 }
+        val queue = IntArray(n)
+        var head = 0
+        var tail = 0
+        for (i in 0 until n) {
+            val a = lab[i * 3 + 1]
+            val b = lab[i * 3 + 2]
+            if (a * a + b * b >= SATURATED_CHROMA * SATURATED_CHROMA) {
+                dist[i] = 0
+                queue[tail++] = i
+            }
+        }
+        // 没有彩色主体（纯黑白线稿）时不做背景归一，避免把整图吸白
+        if (tail == 0) return IntArray(n) { BG_RADIUS + 1 }
+        while (head < tail) {
+            val i = queue[head++]
+            val d = dist[i]
+            if (d >= BG_RADIUS) continue
+            val x = i % width
+            val y = i / width
+            for (dy in -1..1) {
+                val yy = y + dy
+                if (yy < 0 || yy >= height) continue
+                for (dx in -1..1) {
+                    val xx = x + dx
+                    if (xx < 0 || xx >= width) continue
+                    val j = yy * width + xx
+                    if (dist[j] >= 0) continue
+                    dist[j] = d + 1
+                    queue[tail++] = j
+                }
+            }
+        }
+        for (i in 0 until n) if (dist[i] < 0) dist[i] = BG_RADIUS + 1
+        return dist
+    }
+
+    /**
+     * 若图片边缘以近白低彩度像素为主，返回色卡里最纯的白索引；否则 -1。
+     *
+     * 只看最外一圈而不是全图：白色主体（白裙、白墙）配深色背景时边缘
+     * 不满足条件，不会被误吸成白。
+     */
+    private fun neutralWhiteIndex(
+        sample: GridSample,
+        width: Int,
+        height: Int,
+        palette: BeadPalette,
+        excludedCodes: Set<String>,
+    ): Int {
+        if (width < 4 || height < 4) return -1
+        var total = 0
+        var neutral = 0
+        fun check(i: Int) {
+            val l = sample.lab[i * 3]
+            val a = sample.lab[i * 3 + 1]
+            val b = sample.lab[i * 3 + 2]
+            if (l >= 85f && sqrt(a * a + b * b) <= 10f) neutral++
+            total++
+        }
+        for (x in 0 until width) {
+            check(x)
+            check((height - 1) * width + x)
+        }
+        for (y in 1 until height - 1) {
+            check(y * width)
+            check(y * width + width - 1)
+        }
+        if (total == 0 || neutral.toDouble() / total < 0.5) return -1
+
+        // 取"最亮的白"：近白背景要的是干净，L 最高的那个才不显脏。
+        // 同等亮度再比彩度（越中性越像白纸）。
+        var best = -1
+        var bestChroma = Float.MAX_VALUE
+        var bestL = -1f
+        for (i in palette.colors.indices) {
+            val e = palette.colors[i]
+            if (e.code in excludedCodes) continue
+            val chroma = sqrt(e.lab[1] * e.lab[1] + e.lab[2] * e.lab[2])
+            if (chroma > 3f || e.lab[0] < 92f) continue
+            val brighter = e.lab[0] > bestL + 0.01f
+            val sameBright = kotlin.math.abs(e.lab[0] - bestL) <= 0.01f && chroma < bestChroma
+            if (best < 0 || brighter || sameBright) {
+                best = i
+                bestChroma = chroma
+                bestL = e.lab[0]
+            }
+        }
+        return best
     }
 
     /**
