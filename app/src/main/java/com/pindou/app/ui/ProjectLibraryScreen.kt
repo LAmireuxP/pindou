@@ -253,6 +253,9 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
                             Box(Modifier.weight(1f)) {
                                 ProjectCard(
                                     project = project,
+                                    // 数据库里存的是品牌代号，卡片上要给人看的名字
+                                    paletteLabel = vm.palettes.firstOrNull { it.brand == project.paletteBrand }
+                                        ?.brandLabel ?: project.paletteBrand,
                                     onClick = { vm.openProject(project) },
                                     onRename = { renameTarget = project },
                                     onDelete = { deleteTarget = project },
@@ -406,6 +409,7 @@ private fun SecondaryEntry(
 @Composable
 private fun ProjectCard(
     project: ProjectEntity,
+    paletteLabel: String,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -469,7 +473,7 @@ private fun ProjectCard(
             )
             Text(
                 buildString {
-                    append("${project.width}×${project.height} · ${project.paletteBrand}")
+                    append("${project.width}×${project.height} · $paletteLabel")
                     if (project.album.isNotBlank()) append(" · ${project.album}")
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -492,7 +496,7 @@ private fun ProjectCard(
             text = {
                 Column {
                     Text(
-                        "${project.width}×${project.height} · ${project.paletteBrand}",
+                        "${project.width}×${project.height} · $paletteLabel",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -32,7 +32,7 @@ PACKAGES = [
     ("bead144", "ALL144", "全色系 144 色", False),
     ("bead216", "ALL216", "全色系 216 全实色", True),
     ("bead221", "ALL221", "全色系 221 全实色", True),
-    ("bead272", "ALL272", "全色系 272 全实色", True),
+    ("bead272", "ALL272", "全色系 272 色", False),
 ]
 
 SOURCE = "颂拼豆(iBeads) 7.19.36 flutter assets: bead.json + bead_package.json"
