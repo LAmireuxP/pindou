@@ -3,6 +3,7 @@ package com.pindou.app.core.pattern
 import com.pindou.app.core.color.ColorConversions
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -181,6 +182,19 @@ object ImagePreprocessor {
             }
         }
 
+        // ①a2 主色覆盖：一格里的像素高度集中在同一个粗分桶（16 级/通道）时，
+        //      直接用该桶的均值，而不是面积平均。照片几乎不会触发（纹理把像素
+        //      摊平到几十个桶）；插画、扁平配色、带描边的角色图则大面积命中。
+        //      这一步直接消灭"浅蓝翅膀被白底稀释成灰蓝""浅粉腮红变灰"的成因——
+        //      这些区域在源图里本来就是纯色，面积平均才是污染源。
+        //      阈值 0.55 取自颂拼豆 Dart 侧的 clusterPixelRatio 语义：主色占比
+        //      过半才代表"这一格属于这个色块"，否则说明格子确实跨了边界。
+        dominantColorPerCell(pixels, srcW, srcH, gridW, gridH, argb)
+
+        // ①a3 线稿基线快照：后面的锐化与墨线优先都是"加点深色"，线稿模式下
+        //      需要把这些额外落墨撤回去，否则描边会 2 格宽、转角糊成块。
+        val crispBase = argb.copyOf()
+
         // ①b 边界格锐化：一格覆盖几十个源像素时，格子常常一半是人脸一半是头发。
         //     面积平均把两侧混成"中间色"，相邻两格都是模糊过渡色，量化后并成
         //     同一色号——这就是观感上最刺眼的"糊边"。这里只对格内亮度双峰明显
@@ -192,6 +206,21 @@ object ImagePreprocessor {
         //     面积平均后是浅灰，量化完就是断断续续的虚线。凡是"格内有墨、
         //     但大部分面积仍是纸白"的格子，直接取墨色，线才连得起来。
         inkLineCells(pixels, srcW, srcH, gridW, gridH, argb, edgeMask)
+
+        // ①d 描边骨架：线稿的描边按覆盖率落格必然断续（同一笔画在相邻格里
+        //     可能 70% 也可能 30%）。改成先细化成 1 像素中心线再落格，一格
+        //     有线穿过就整格判墨——描边必然连续、必然一格宽，且不会因为
+        //     转角处两格同时变黑而糊成块。照片不触发（lineArt=false）。
+        val stroke = StrokeSkeleton.analyze(pixels, srcW, srcH, gridW, gridH)
+        if (stroke.lineArt) applyStroke(argb, edgeMask, stroke, gridW, gridH, crispBase)
+
+        // ①e 纸白底色解混：线稿的浅色小块（腮红、翅膀、小爱心）在很多格里
+        //     只占三成面积，其余是白纸。面积平均出来是"粉+白的均值"，量化后
+        //     变成发灰的浅粉——这就是"颜色不如原画"的主因。线稿模式下把
+        //     纸白像素排除后重新取色，浅粉就还是浅粉。
+        if (stroke.lineArt) {
+            unblendOnPaper(pixels, srcW, srcH, gridW, gridH, argb, edgeMask, stroke)
+        }
 
         val lab = FloatArray(argb.size * 3)
         for (i in argb.indices) {
@@ -226,6 +255,405 @@ object ImagePreprocessor {
 
     /** 细线桥接：深色侧亮度上限（L 高于它的深色是阴影，不是墨线） */
     private const val BRIDGE_INK_L = 120f
+
+    /**
+     * 把骨架结果落到网格上。
+     *
+     * 三条规则，顺序不能换：
+     * 1. 中心线穿过的格子 → 墨（描边主路径）；
+     * 2. 没有中心线但墨覆盖 ≥ [SOLID_COVERAGE] 的格子 → 墨（实心黑块、眼珠，
+     *    细化会把这些区域缩成一个点，必须靠覆盖率保回来）；
+     * 3. 对角桥接：两个斜向墨格之间的空格补墨，避免细化后出现"只在对角相接"
+     *    的断点——拼豆是 4 邻接的，斜接在纸面上看就是断的。
+     */
+    private fun applyStroke(
+        argb: IntArray,
+        edgeMask: BooleanArray,
+        stroke: StrokeSkeleton.Result,
+        w: Int,
+        h: Int,
+        base: IntArray,
+    ) {
+        val n = w * h
+        val ink = BooleanArray(n)
+        // 先把整格恢复到主色基线，再统一按"覆盖率 + 骨架"落墨。
+        // 覆盖率门槛 0.55：描边的主判据是骨架命中，覆盖率只兜底实心块。
+        // 旧值 0.10 会让 45° 斜线整条落墨——每格都被擦到 30%，于是线胖成两格。
+        for (i in 0 until n) {
+            val hit = stroke.hits[i] >= 1 || stroke.coverage[i] >= LINE_INK_MIN
+            val solid = stroke.coverage[i] >= SOLID_COVERAGE
+            if (!hit && !solid) {
+                argb[i] = base[i]
+                edgeMask[i] = false
+                continue
+            }
+            if (stroke.inkArgb[i] == 0) continue
+            argb[i] = stroke.inkArgb[i]
+            edgeMask[i] = true
+            ink[i] = true
+        }
+        // 格子级清理：落墨只认"中心线穿过的格子"，描边天然是一格宽，
+        // 不会再出现"有的地方两格宽、有的地方只剩一格"的胖瘦跳变。
+        //
+        // 复杂度 O(格数)。
+        val locked = BooleanArray(n) { stroke.coverage[it] >= SOLID_COVERAGE }
+        pruneGridSpurs(ink, locked, stroke, w, h)
+        // 不做"上下/左右都是墨就补一格"的补洞：斜向笔画每级台阶都会被补，
+        // 描边直接胖一倍。断线交给骨架命中 + 下面的对角桥接。
+        // 清理改过 ink 后，argb/edgeMask 必须跟着回写，否则被削掉的格子会留墨色。
+        // 只回写 applyStroke 自己认领过的格子，别把 sharpenEdgeCells 的成果冲掉。
+        //
+        // 回写颜色不能直接用 base：那一格的 base 是"白纸 + 黑线"的均值，是灰的，
+        // 落到纸上就是描边旁边一圈脏灰。改成取周围非墨格里出现最多的颜色。
+        val fill = IntArray(n)
+        for (i in 0 until n) {
+            if (ink[i]) continue
+            if (stroke.hits[i] < 1 && stroke.coverage[i] < LINE_INK_MIN) continue
+            fill[i] = neighborColor(ink, argb, w, h, i)
+        }
+        for (i in 0 until n) {
+            if (ink[i]) {
+                argb[i] = stroke.inkArgb[i]
+                edgeMask[i] = true
+                continue
+            }
+            if (stroke.hits[i] >= 1 || stroke.coverage[i] >= LINE_INK_MIN) {
+                argb[i] = if (fill[i] != 0) fill[i] else base[i]
+                edgeMask[i] = false
+            }
+        }
+
+        // 对角转角补一格：骨架是 8 邻接的，45° 走一步会从 (x,y) 直接跳到
+        // (x+1,y+1)，中间两个转角格都没墨，纸面上看就是断线。对每一对
+        // 斜邻墨格，只在两个转角格里挑覆盖率大的那个补上——正好还原
+        // 1px 线的 Bresenham 台阶，线连续、仍然一格宽。
+        // 不能两个都补：那就是把描边整条加粗一倍（旧版的行为）。
+        repeat(2) {
+            val add = ArrayList<Int>(64)
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    val i = y * w + x
+                    if (!ink[i]) continue
+                    for (d in 0..3) {
+                        val dx = if (d == 0 || d == 2) 1 else -1
+                        val dy = if (d < 2) 1 else -1
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+                        if (!ink[ny * w + nx]) continue
+                        val c1x = nx
+                        val c1y = y
+                        val c2x = x
+                        val c2y = ny
+                        val c1 = c1y * w + c1x
+                        val c2 = c2y * w + c2x
+                        if (ink[c1] || ink[c2]) continue
+                        val pick = if (stroke.coverage[c1] >= stroke.coverage[c2]) c1 else c2
+                        // 转角格本身只被线的边角擦到，覆盖率很低，不能拿
+                        // 覆盖率当门槛；只要它确实沾到过墨色就补。
+                        if (stroke.inkArgb[pick] == 0) continue
+                        add.add(pick)
+                    }
+                }
+            }
+            if (add.isEmpty()) return@repeat
+            for (i in add) {
+                argb[i] = stroke.inkArgb[i]
+                edgeMask[i] = true
+                ink[i] = true
+            }
+        }
+    }
+
+    /** 实心深色区域：墨覆盖率达到它就直接保留整格（细化会把眼珠缩成一点） */
+    private const val SOLID_COVERAGE = 0.80f
+
+    /** 孤点剪枝：覆盖率低于它的单邻格墨点视为噪点（抗锯齿、毛发飞边） */
+    private const val SPUR_COVERAGE = 0.34f
+
+    /**
+     * 去掉只有 1 个 8 邻格邻接的墨点。
+     *
+     * 落格后常见的是"线旁边多出一颗豆"，纸面上看是脏点。真实笔画端点覆盖率
+     * 通常 ≥ [SPUR_COVERAGE]（线头会占掉半格），所以用覆盖率做区分，不误删线头。
+     */
+    private fun pruneGridSpurs(
+        ink: BooleanArray,
+        locked: BooleanArray,
+        stroke: StrokeSkeleton.Result,
+        w: Int,
+        h: Int,
+    ) {
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                if (!ink[i] || locked[i]) continue
+                if (stroke.coverage[i] >= SPUR_COVERAGE) continue
+                var deg = 0
+                for (dy in -1..1) for (dx in -1..1) {
+                    if (dx == 0 && dy == 0) continue
+                    val nx = x + dx
+                    val ny = y + dy
+                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+                    if (ink[ny * w + nx]) deg++
+                }
+                // 只删"四面不挨"的孤点。degree=1 是笔画端点，删了就成断头线。
+                if (deg == 0) ink[i] = false
+            }
+        }
+    }
+
+    /** 解混：纸白判定亮度下限（0..255） */
+    private const val UNBLEND_PAPER_L = 238.0
+
+    /** 解混：纸白判定彩度上限（R/G/B 极差），超过它的"白"其实是有色浅底 */
+    private const val PAPER_CHROMA = 12
+
+    /** 解混：每格保留的候选色桶数（4 bit/通道），超出说明格子纹理太杂 */
+    private const val UNBLEND_BUCKETS = 6
+
+    /** 解混：彩色像素最少占比，低于它这格仍是纸白，别把噪点放大成整格 */
+    private const val UNBLEND_MIN_SHARE = 0.18f
+
+    /** 解混：彩色像素里深色（墨）占比上限，超过说明这格是断线残影不是色块 */
+    private const val UNBLEND_MAX_DARK = 0.60f
+
+    /**
+     * 纸白底色解混：把一格里"白纸"像素剔除后重新取色。
+     *
+     * 权重用 (1-L)²，越接近纸白权重越低，等价于向色块核心靠拢；
+     * 这样浅粉腮红不会被抗锯齿过渡带拉成灰粉。
+     *
+     * 复杂度 O(源像素)，与 [dominantColorPerCell] 同量级。
+     */
+    private fun unblendOnPaper(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        gridW: Int,
+        gridH: Int,
+        argb: IntArray,
+        edgeMask: BooleanArray,
+        stroke: StrokeSkeleton.Result,
+    ) {
+        val n = gridW * gridH
+        val paperCnt = IntArray(n)
+        val darkCnt = IntArray(n)
+        val total = IntArray(n)
+        // 每格最多记 6 个候选色桶（4 bit/通道），桶内累加真实值求均值。
+        // 用"众数桶"而不是整体加权平均：同一块纯色区域里每格的平均值会差 ±2，
+        // 量化后会跳成两三个相邻色号，纸面上一片格子深浅不一。
+        val bucket = IntArray(n * UNBLEND_BUCKETS)
+        val bCnt = IntArray(n * UNBLEND_BUCKETS)
+        val bR = LongArray(n * UNBLEND_BUCKETS)
+        val bG = LongArray(n * UNBLEND_BUCKETS)
+        val bB = LongArray(n * UNBLEND_BUCKETS)
+        for (y in 0 until srcH) {
+            val gy = (y.toLong() * gridH / srcH).toInt()
+            val rowBase = gy * gridW
+            val row = y * srcW
+            for (x in 0 until srcW) {
+                val k = rowBase + (x.toLong() * gridW / srcW).toInt()
+                total[k]++
+                val p = pixels[row + x]
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                val l = 0.299 * r + 0.587 * g + 0.114 * b
+                val mx = maxOf(r, maxOf(g, b))
+                val mn = minOf(r, minOf(g, b))
+                if (l >= UNBLEND_PAPER_L && mx - mn <= PAPER_CHROMA) {
+                    paperCnt[k]++
+                    continue
+                }
+                if (l < 110.0) darkCnt[k]++
+                val key = ((r shr 4) shl 8) or ((g shr 4) shl 4) or (b shr 4)
+                val base = k * UNBLEND_BUCKETS
+                var j = 0
+                while (j < UNBLEND_BUCKETS && bCnt[base + j] != 0 && bucket[base + j] != key) j++
+                if (j == UNBLEND_BUCKETS) continue // 格子太杂（纹理/渐变），交给常规采样
+                bucket[base + j] = key
+                bCnt[base + j]++
+                bR[base + j] += r
+                bG[base + j] += g
+                bB[base + j] += b
+            }
+        }
+        for (i in 0 until n) {
+            val t = total[i]
+            if (t == 0) continue
+            // 描边格（骨架判定为墨）不动：颜色已由 applyStroke 决定
+            if (stroke.hits[i] >= 1 || stroke.coverage[i] >= LINE_INK_MIN) continue
+            val colorCnt = t - paperCnt[i]
+            if (colorCnt.toFloat() / t < UNBLEND_MIN_SHARE) continue
+            if (darkCnt[i].toFloat() / colorCnt > UNBLEND_MAX_DARK) continue
+            // 取像素最多的那个色桶
+            val base = i * UNBLEND_BUCKETS
+            var best = -1
+            var bestN = 0
+            for (j in 0 until UNBLEND_BUCKETS) {
+                if (bCnt[base + j] > bestN) {
+                    bestN = bCnt[base + j]
+                    best = j
+                }
+            }
+            if (best < 0) continue
+            val r = (bR[base + best].toDouble() / bestN).roundToInt().coerceIn(0, 255)
+            val g = (bG[base + best].toDouble() / bestN).roundToInt().coerceIn(0, 255)
+            val b = (bB[base + best].toDouble() / bestN).roundToInt().coerceIn(0, 255)
+            // 近中性、又很亮的"淡灰"多半是纸面阴影、水印、压缩噪点：
+            // 解混会把它们放大成一片浅灰块，量化后变成脏底色，直接跳过。
+            // 同理，近中性又偏暗的是白纸与描边的抗锯齿混合，落格后是脏灰。
+            val mx = maxOf(r, maxOf(g, b))
+            val mn = minOf(r, minOf(g, b))
+            val l = 0.299 * r + 0.587 * g + 0.114 * b
+            if (mx - mn < 12 && l > 200.0) continue
+            if (mx - mn < 18 && l < 205.0) continue
+            argb[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            edgeMask[i] = true
+        }
+    }
+
+    /**
+     * 取 8 邻格里出现最多的"非墨"颜色，用来填被削掉的墨格。
+     * 找不到（整片都是墨）返回 0，调用方回退到 base。
+     */
+    private fun neighborColor(
+        ink: BooleanArray,
+        argb: IntArray,
+        w: Int,
+        h: Int,
+        i: Int,
+    ): Int {
+        val x = i % w
+        val y = i / w
+        val cand = IntArray(8)
+        val cnt = IntArray(8)
+        var m = 0
+        for (dy in -1..1) {
+            val ny = y + dy
+            if (ny < 0 || ny >= h) continue
+            for (dx in -1..1) {
+                if (dx == 0 && dy == 0) continue
+                val nx = x + dx
+                if (nx < 0 || nx >= w) continue
+                val j = ny * w + nx
+                if (ink[j]) continue
+                val c = argb[j]
+                if (c == 0) continue
+                var k = 0
+                while (k < m && cand[k] != c) k++
+                if (k == m && m < 8) {
+                    cand[m] = c
+                    cnt[m] = 0
+                    m++
+                }
+                if (k < m) cnt[k]++
+            }
+        }
+        var best = 0
+        var bestN = 0
+        for (k in 0 until m) {
+            if (cnt[k] > bestN) {
+                bestN = cnt[k]
+                best = cand[k]
+            }
+        }
+        return best
+    }
+
+    /**
+     * 线稿落墨：这一格被描边穿过的最低墨占比。
+     *
+     * 取 0.95 等于"只认骨架命中"——描边宽度换算到格子上普遍不足一格，
+     * 按面积比例落墨会把一条 45° 线落成两格宽的锯齿带（覆盖率 0.3 的门槛
+     * 就能触发），104 宽下尤其明显。骨架命中保证一格宽；实心黑块由
+     * [SOLID_COVERAGE] 单独兜底。
+     */
+    private const val LINE_INK_MIN = 0.55f
+
+    /** 对角桥接的最低墨覆盖率：低于它说明只是擦到边角，补上去反而变脏 */
+    private const val BRIDGE_COVERAGE = 0.10f
+
+    /**
+     * 每格主色统计。
+     *
+     * 单遍扫描源像素，每格维护 3 个粗色桶（4 bit/通道）的计数与 RGB 累加。
+     * 主桶占比 ≥ [DOMINANT_SHARE] 时把该桶均值写回 [argb]，否则保持面积平均。
+     *
+     * 为什么是 3 个桶而不是全直方图：一格最多覆盖几千像素，3 个桶足以覆盖
+     * "底色 + 描边 + 抗锯齿过渡"三种成分；再多只是给噪点留位置。
+     * 复杂度 O(源像素 × 3 次比较)，14MP 图约 20ms，可忽略。
+     */
+    private fun dominantColorPerCell(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        gridW: Int,
+        gridH: Int,
+        argb: IntArray,
+    ) {
+        val n = gridW * gridH
+        val SLOTS = 3
+        val keys = IntArray(n * SLOTS) { -1 }
+        val cnt = IntArray(n * SLOTS)
+        val sr = IntArray(n * SLOTS)
+        val sg = IntArray(n * SLOTS)
+        val sb = IntArray(n * SLOTS)
+        for (y in 0 until srcH) {
+            val rowBase = (y.toLong() * gridH / srcH).toInt() * gridW
+            val row = y * srcW
+            for (x in 0 until srcW) {
+                val p = pixels[row + x]
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                // 16 级分桶：±8 的色差在拼豆粒度上不可见，但足以把同一片
+                // 平涂色的抗锯齿边缘分出去
+                val key = ((r shr 4) shl 8) or ((g shr 4) shl 4) or (b shr 4)
+                val base = (rowBase + (x.toLong() * gridW / srcW).toInt()) * SLOTS
+                var slot = -1
+                for (t in 0 until SLOTS) {
+                    if (keys[base + t] == key) { slot = t; break }
+                }
+                if (slot < 0) {
+                    // 没有同桶：占掉计数最小的槽位（第三个桶天然是"过渡色"）
+                    var minT = 0
+                    for (t in 1 until SLOTS) if (cnt[base + t] < cnt[base + minT]) minT = t
+                    slot = minT
+                    keys[base + slot] = key
+                    cnt[base + slot] = 0
+                    sr[base + slot] = 0
+                    sg[base + slot] = 0
+                    sb[base + slot] = 0
+                }
+                cnt[base + slot]++
+                sr[base + slot] += r
+                sg[base + slot] += g
+                sb[base + slot] += b
+            }
+        }
+        for (i in 0 until n) {
+            val base = i * SLOTS
+            var best = 0
+            var total = 0
+            for (t in 0 until SLOTS) {
+                total += cnt[base + t]
+                if (cnt[base + t] > cnt[base + best]) best = t
+            }
+            if (total == 0) continue
+            val bc = cnt[base + best]
+            if (bc.toDouble() / total < DOMINANT_SHARE) continue
+            val rr = (sr[base + best] + bc / 2) / bc
+            val gg = (sg[base + best] + bc / 2) / bc
+            val bb = (sb[base + best] + bc / 2) / bc
+            argb[i] = (0xFF shl 24) or (rr.coerceIn(0, 255) shl 16) or
+                (gg.coerceIn(0, 255) shl 8) or bb.coerceIn(0, 255)
+        }
+    }
+
+    /** 主色覆写阈值：单桶占比过半才认为这一格是纯色块 */
+    private const val DOMINANT_SHARE = 0.55
 
     /**
      * 边界格锐化：把"跨边界格子"的颜色换成占多数那一侧的平均色。

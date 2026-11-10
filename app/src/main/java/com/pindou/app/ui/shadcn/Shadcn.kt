@@ -241,12 +241,14 @@ fun ShChip(
             .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
             .border(1.dp, if (selected) Color.Transparent else MaterialTheme.colorScheme.outline, shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            // 横向 padding 收到 11dp：一行能多放一个 chip，裁剪页的三行折行
+            // 就是被 14dp 的留白挤出来的
+            .padding(horizontal = 11.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelMedium,
             color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

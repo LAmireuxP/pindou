@@ -20,10 +20,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.Color
 import com.pindou.app.ui.shadcn.ShCard
 import com.pindou.app.ui.shadcn.ShIconTile
 import com.pindou.app.ui.shadcn.ShPageHeader
+import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 
 /**
@@ -57,13 +57,13 @@ fun CreateScreen(
                 title = "图片生成",
                 subtitle = "照片转拼豆图纸",
                 onClick = onPickPhoto,
-            ) { ShIconTile(Icons.Rounded.AddPhotoAlternate, Color(0xFFDBEAFE), Color(0xFF2563EB)) }
+            ) { ShIconTile(Icons.Rounded.AddPhotoAlternate, ClayColors.TintGreen, ClayColors.Primary) }
             EntryCard(
                 modifier = Modifier.weight(1f),
                 title = "像素画生成",
                 subtitle = "按画像素 1:1 还原",
                 onClick = onPickPhoto,
-            ) { ShIconTile(Icons.Rounded.GridOn, Color(0xFFEDE9FE), Color(0xFF7C3AED)) }
+            ) { ShIconTile(Icons.Rounded.GridOn, ClayColors.TintSky, ClayColors.BrandBlue) }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -72,13 +72,13 @@ fun CreateScreen(
                 title = "色号图识别",
                 subtitle = "导入现成图纸，自动认格",
                 onClick = onPickChart,
-            ) { ShIconTile(Icons.Rounded.Palette, Color(0xFFFEF3C7), Color(0xFFB45309)) }
+            ) { ShIconTile(Icons.Rounded.Palette, ClayColors.TintButter, ClayColors.BrandOchre) }
             EntryCard(
                 modifier = Modifier.weight(1f),
                 title = "空白画布",
                 subtitle = "从零手绘",
                 onClick = { vm.startBlankCanvas() },
-            ) { ShIconTile(Icons.Rounded.Add, Color(0xFFDCFCE7), Color(0xFF15803D)) }
+            ) { ShIconTile(Icons.Rounded.Add, ClayColors.TintRose, ClayColors.BrandCoral) }
         }
 
         Spacer(Modifier.height(Spacing.xs))

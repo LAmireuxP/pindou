@@ -2,6 +2,9 @@ package com.pindou.app.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,11 +22,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.rounded.GridOn
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +52,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -136,9 +144,9 @@ fun CropScreen(vm: AppViewModel) {
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
         ShPageHeader(
-            title = "裁剪与旋转",
-            subtitle = "先定网格尺寸，框内直接看每格落什么色",
-            modifier = Modifier.padding(top = Spacing.lg),
+            title = "裁剪",
+            subtitle = "拖动角柄调整范围，框内直接看每格落什么色",
+            modifier = Modifier.padding(top = Spacing.sm),
         )
 
         if (bitmap == null || rect == null || imgW <= 0 || imgH <= 0) {
@@ -293,11 +301,29 @@ fun CropScreen(vm: AppViewModel) {
                     },
                 )
             }
-            ShChip(
-                text = if (vm.cropPreviewEnabled) "网格预览·开" else "网格预览·关",
-                selected = vm.cropPreviewEnabled,
-                onClick = { vm.toggleCropPreview() },
-            )
+            // 网格预览做成图标开关：这个开关每帧都在用，占一整条 chip 会把
+            // 比例选择挤到第二行。选中态用淡绿底 + 主色图标，和 chip 同一视觉语言。
+            val previewOn = vm.cropPreviewEnabled
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(9999.dp))
+                    .background(if (previewOn) ClayColors.TintGreen else androidx.compose.ui.graphics.Color.Transparent)
+                    .border(
+                        1.dp,
+                        if (previewOn) ClayColors.Primary.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outline,
+                        RoundedCornerShape(9999.dp),
+                    )
+                    .clickable { vm.toggleCropPreview() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.GridOn,
+                    contentDescription = if (previewOn) "关闭网格预览" else "打开网格预览",
+                    tint = if (previewOn) ClayColors.Primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
 
         // 裁剪页就把网格定死：先看每格颜色，再决定框多大，下一步不用回来改
@@ -436,6 +462,8 @@ private fun CropOverlay(
     val cornerHitR = with(LocalDensity.current) { 56.dp.toPx() }
     val edgeHitR = with(LocalDensity.current) { 28.dp.toPx() }
     var drag by remember { mutableStateOf<CropDrag?>(null) }
+    // 抓到角柄时给一次轻震：手指盖住角标时看不到变化，震一下才知道抓住了
+    val haptic = LocalHapticFeedback.current
 
     Canvas(
         Modifier
@@ -444,6 +472,9 @@ private fun CropOverlay(
                 detectDragGestures(
                     onDragStart = { pos ->
                         drag = hitTest(pos, currentRect, scale, cornerHitR, edgeHitR)
+                        if (drag !is CropDrag.New) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
                     },
                     onDrag = { change, _ ->
                         change.consume()

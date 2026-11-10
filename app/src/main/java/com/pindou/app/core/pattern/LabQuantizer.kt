@@ -140,7 +140,10 @@ object LabQuantizer {
             // 再被色卡映射成冷灰/蓝灰——就是"左耳那几颗蓝点"。收到 94 之后
             // 只有接近纯白的才吸，灰色整片进色卡映射，形状才留得住。
             val pureWhite = l >= 96f && chroma2 <= 36f
-            val bgWhite = bgDistance[i] > BG_RADIUS && l >= WHITE_FLOOR && chroma2 <= 256f
+            // 上限从 chroma²≤256（彩度 16）收到 ≤36（彩度 6）：腮红、内耳、
+            // 翅膀这类浅彩度平涂色（彩度 8~14）过去整片被吸成白，形状就丢了。
+            // 背景渐变本身是中性灰白（彩度 ≤4），收到 6 仍然能吃掉背景。
+            val bgWhite = bgDistance[i] > BG_RADIUS && l >= WHITE_FLOOR && chroma2 <= 36f
             val pureInk = inkIdx >= 0 && l <= INK_FLOOR && chroma2 <= INK_CHROMA2
             cells[i] = if (pureInk) {
                 inkIdx
@@ -183,7 +186,7 @@ object LabQuantizer {
     private const val BG_RADIUS = 3
 
     /** 浅色归一的白度下限（Lab L）：低于此值的灰要按色卡灰保留 */
-    private const val WHITE_FLOOR = 94f
+    private const val WHITE_FLOOR = 95f
 
     /** 近黑归一的亮度上限（Lab L）：低于它的中性格视作描边墨色 */
     private const val INK_FLOOR = 22f

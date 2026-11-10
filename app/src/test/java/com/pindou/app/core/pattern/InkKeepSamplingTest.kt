@@ -45,7 +45,49 @@ class InkKeepSamplingTest {
         val sample = ImagePreprocessor.sample(pixels, size, size, grid, grid, FilterLevel.NONE)
 
         val l = ColorConversions.argbToLab(sample.argb[0])[0]
-        assertTrue("不足两成不应翻黑，实际 L=$l", l > 60f)
+        // 纯黑白图会被判成线稿，细线走骨架化整格判墨——这是期望行为：
+        // 线稿的描边必须连续，不能因为覆盖率低就断掉。
+        assertTrue("线稿细线应整格判墨，实际 L=$l", l < 30f)
+    }
+
+    @Test
+    fun `照片风格图上零星深色不翻转整格`() {
+        val size = 160
+        val grid = 4
+        // 中灰底 + 左侧 5px 深色条：没有纸白，中间调占比 87.5%，
+        // 线稿判定不成立，仍走"不足两成不翻黑"的旧规则。
+        val bg = argb(150, 150, 150)
+        val dark = argb(40, 40, 40)
+        val pixels = IntArray(size * size) { i -> if (i % size < 5) dark else bg }
+        val sample = ImagePreprocessor.sample(pixels, size, size, grid, grid, FilterLevel.NONE)
+
+        val l = ColorConversions.argbToLab(sample.argb[0])[0]
+        assertTrue("照片支路不足两成不应翻黑，实际 L=$l", l > 40f)
+    }
+
+    @Test
+    fun `线稿斜线落格后逐行都有墨`() {
+        val size = 160
+        val grid = 4
+        val white = argb(255, 255, 255)
+        val black = argb(0, 0, 0)
+        val pixels = IntArray(size * size) { white }
+        // 一条 5px 宽的对角线，模拟手绘描边：不做骨架化时会落成断续虚线
+        for (t in 10 until 150) {
+            for (d in -2..2) {
+                val x = t + d
+                val y = t
+                if (x in 0 until size && y in 0 until size) pixels[y * size + x] = black
+            }
+        }
+        val sample = ImagePreprocessor.sample(pixels, size, size, grid, grid, FilterLevel.NONE)
+        // 每一行网格都应有墨格：斜线跨过的每个行带都必须留下至少一格
+        for (gy in 0 until grid) {
+            val row = (0 until grid).count { gx ->
+                ColorConversions.argbToLab(sample.argb[gy * grid + gx])[0] < 30f
+            }
+            assertTrue("第 $gy 行没有墨格，描边断了", row >= 1)
+        }
     }
 
     @Test
