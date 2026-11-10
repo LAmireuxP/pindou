@@ -176,11 +176,19 @@ fun ParamsScreen(vm: AppViewModel) {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "检测到像素画原图 · 原画 ${aw}×${ah}",
+                                if (vm.pixelArtMode) {
+                                    "像素画模式 · 原画 ${aw}×${ah}"
+                                } else {
+                                    "检测到像素画原图 · 原画 ${aw}×${ah}"
+                                },
                                 style = MaterialTheme.typography.labelLarge,
                             )
                             Text(
-                                "先还原画像素再落格，颜色不会被白底稀释",
+                                if (vm.pixelArtMode) {
+                                    "按画像素取原色，不做平均、不产生过渡色"
+                                } else {
+                                    "先还原画像素再落格，颜色不会被白底稀释"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

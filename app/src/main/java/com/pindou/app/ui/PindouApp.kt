@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -66,9 +67,12 @@ fun PindouApp(vm: AppViewModel) {
     // 图片选择器：走标准 SAF（OpenDocument）。
     // 已知问题：HyperOS 上 PickVisualMedia（小米「安全访问」通道）返回后，
     // 会残留一个透明层吞掉应用内所有点击，故暂时全程使用 SAF 选择器。
+    // 当前这次选择器回调走哪条支路：true = 显式「像素画生成」
+    var pendingPixelMode by remember { mutableStateOf(false) }
+
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
-    ) { uri -> uri?.let(vm::onImagePicked) }
+    ) { uri -> uri?.let { vm.onImagePicked(it, pendingPixelMode) } }
 
     // .bpat 工程文件导入：同样走 SAF，任意 mime（导出方自定义扩展名，不做类型白名单）
     val bpatPicker = rememberLauncherForActivityResult(
@@ -81,6 +85,12 @@ fun PindouApp(vm: AppViewModel) {
     ) { uri -> uri?.let(vm::onChartPicked) }
 
     fun pickImage() {
+        pendingPixelMode = false
+        imagePicker.launch(arrayOf("image/*"))
+    }
+
+    fun pickPixelImage() {
+        pendingPixelMode = true
         imagePicker.launch(arrayOf("image/*"))
     }
 
@@ -143,6 +153,7 @@ fun PindouApp(vm: AppViewModel) {
                     vm,
                     selectedTab,
                     onPickImage = ::pickImage,
+                    onPickPixel = ::pickPixelImage,
                     onPickBpat = ::pickBpat,
                     onPickChart = ::pickChart,
                 )
@@ -162,12 +173,18 @@ private fun HomeScreen(
     vm: AppViewModel,
     selectedTab: Int,
     onPickImage: () -> Unit,
+    onPickPixel: () -> Unit,
     onPickBpat: () -> Unit,
     onPickChart: () -> Unit,
 ) {
     when (selectedTab) {
         0 -> ProjectLibraryTab(vm, onPickImage, onPickBpat)
-        1 -> CreateScreen(vm, onPickPhoto = onPickImage, onPickChart = onPickChart)
+        1 -> CreateScreen(
+            vm,
+            onPickPhoto = onPickImage,
+            onPickPixel = onPickPixel,
+            onPickChart = onPickChart,
+        )
         else -> SettingsScreen(vm)
     }
 }

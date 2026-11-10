@@ -210,6 +210,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var pixelArtGrid by mutableStateOf<Pair<Int, Int>?>(null)
         private set
 
+    /**
+     * 用户从「像素画生成」入口导入：强制像素支路。
+     *
+     * 与自动检测分开的原因：自动检测宁漏勿错（照片被认成像素画，整张图
+     * 会碎成色块），所以门槛高；用户显式声明"这是像素画"时，宁可放宽到
+     * 兜底算法也要走像素支路，否则入口点了跟「图片生成」没有任何区别。
+     */
+    var pixelArtMode by mutableStateOf(false)
+        private set
+
     /** 自定义宽高时是否联动另一轴（默认开，防止宽高独立输入把图拉扁） */
     var lockGridAspect by mutableStateOf(true)
         private set
@@ -314,7 +324,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         palettes.filter { it.beadSize.name == beadSizeTag }
 
     /** Photo Picker / GetContent 回调：解码并限制最大边 2048 */
-    fun onImagePicked(uri: Uri) {
+    fun onImagePicked(uri: Uri, pixelMode: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val resolver = getApplication<Application>().contentResolver
@@ -338,11 +348,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }.onSuccess { (bmp, pixels, size) ->
                 // 像素画检测放在导入线程里做（O(源像素)，200 条抽样线），
                 // 检测结果决定默认裁剪和默认网格，必须在进入裁剪页之前拿到。
-                val art = PixelArtDetector.detect(pixels, size[0], size[1])
+                val art = if (pixelMode) {
+                    PixelArtDetector.detectForced(pixels, size[0], size[1])
+                } else {
+                    PixelArtDetector.detect(pixels, size[0], size[1])
+                }
+                pixelArtMode = pixelMode
                 pixelArtGrid = art?.let { it.artW to it.artH }
                 // 像素画原图默认「无过滤」：不聚类、不限色，逐画像素直接映射
                 // 色卡，源图每一层淡粉/淡黄都能落成独立色号。照片维持中过滤。
-                filterLevel = if (art != null) FilterLevel.NONE else FilterLevel.MEDIUM
+                filterLevel = if (pixelMode || art != null) FilterLevel.NONE else FilterLevel.MEDIUM
                 originalPixels = pixels
                 originalW = size[0]
                 originalH = size[1]
@@ -353,7 +368,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // 导入时就按图的主体定位：像素画保留完整画布（裁掉白边反而丢画像素），
                 // 照片默认取中心最大正方形，避免后续网格宽高比不一致时被拉伸。
                 cropRect = if (art != null) {
-                    CropRect.full(size[0], size[1])
+                    // 裁到画像素网格的外框：白边/描边留白不进图纸，网格边界
+                    // 正好压在画像素边界上，取色不会跨块。
+                    val l = art.ox.toFloat().coerceIn(0f, size[0] - 1f)
+                    val t = art.oy.toFloat().coerceIn(0f, size[1] - 1f)
+                    val r = (art.ox + art.artW * art.blockW).toFloat().coerceIn(l + 1f, size[0].toFloat())
+                    val b = (art.oy + art.artH * art.blockH).toFloat().coerceIn(t + 1f, size[1].toFloat())
+                    CropRect(l, t, r, b)
                 } else {
                     ImageTransforms.centerSquare(size[0], size[1])
                 }
@@ -404,7 +425,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * 原画尺寸，用户不必自己数格子。
      */
     private fun refreshPixelArt(pixels: IntArray, w: Int, h: Int, forceGrid: Boolean = true) {
-        val art = PixelArtDetector.detect(pixels, w, h)
+        val art = if (pixelArtMode) {
+            PixelArtDetector.detectForced(pixels, w, h)
+        } else {
+            PixelArtDetector.detect(pixels, w, h)
+        }
         pixelArtGrid = art?.let { it.artW to it.artH }
         if (art != null) {
             filterLevel = FilterLevel.NONE
@@ -415,6 +440,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             adaptiveAnchor = 0
             adaptiveScale = 1f
+        } else if (pixelArtMode) {
+            filterLevel = FilterLevel.NONE
         }
     }
 
@@ -763,6 +790,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         removeBackground = removeBackground,
         backgroundTolerance = backgroundTolerance.toDouble(),
         filterLevel = filterLevel,
+        exactArt = pixelArtMode,
     )
 
     /**
@@ -942,6 +970,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** 空白画布：直接创建空网格进编辑器 */
     fun startBlankCanvas() {
         val palette = selectedPalette ?: return
+        pixelArtMode = false
         val w = gridW.coerceIn(5, 200)
         val h = gridH.coerceIn(5, 200)
         val cells = IntArray(w * h) { -1 }
@@ -983,6 +1012,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 imageH = bitmap.height
                 // 文字位图不是照片也不是像素画，清掉画像素网格，避免沿用上一张图的 56×50
                 pixelArtGrid = null
+                pixelArtMode = false
                 originalPixels = pixels
                 originalW = bitmap.width
                 originalH = bitmap.height
@@ -1099,6 +1129,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         adaptiveAnchor = 0
         adaptiveScale = 1f
         textSource = null
+        pixelArtMode = false
+        pixelArtGrid = null
     }
 
     /** 当前文字拼豆的源文字（非 null = 文字模式）；改文字时更新 */

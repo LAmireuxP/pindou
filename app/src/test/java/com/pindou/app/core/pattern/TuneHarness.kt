@@ -33,12 +33,13 @@ class TuneHarness {
             FilterLevel.entries.filter { it.name.equals(levelEnv, true) }
         } else FilterLevel.entries
         val removeBg = System.getenv("TUNE_BG") == "1"
+        val exact = System.getenv("TUNE_EXACT") == "1"
         val paletteName = System.getenv("TUNE_PALETTE") ?: "all_solid_272.json"
 
         val palette = PaletteJson.parse(File("src/main/assets/palettes/$paletteName").readText())
         val targets = if (want == "all") entries else entries.filter { it.first == want }
         if (targets.isEmpty()) return
-        for (entry in targets) runOne(entry, widths, levels, removeBg, palette)
+        for (entry in targets) runOne(entry, widths, levels, removeBg, exact, palette)
     }
 
     private fun runOne(
@@ -46,6 +47,7 @@ class TuneHarness {
         widths: List<Int>,
         levels: List<FilterLevel>,
         removeBg: Boolean,
+        exact: Boolean,
         palette: com.pindou.app.core.palette.BeadPalette,
     ) {
         val (name, w, h) = entry
@@ -82,18 +84,27 @@ class TuneHarness {
                         "ART artW=${d.artW} artH=${d.artH} bw=${"%.2f".format(d.blockW)} bh=${"%.2f".format(d.blockH)} ox=${"%.1f".format(d.ox)} oy=${"%.1f".format(d.oy)}"
                 )
             }
+            if (exact) {
+                val f = PixelArtDetector.detectForced(pixels, w, h)
+                println(
+                    if (f == null) "ARTX none" else
+                        "ARTX artW=${f.artW} artH=${f.artH} bw=${"%.2f".format(f.blockW)} ox=${"%.1f".format(f.ox)}"
+                )
+            }
             for (lvl in levels) {
+                val useExact = exact && lvl == FilterLevel.NONE
                 val t0 = System.nanoTime()
                 val res = PatternGenerator.generate(
                     pixels, w, h,
                     GeneratorOptions(
                         gridW = gw, gridH = gh, filterLevel = lvl,
                         removeBackground = removeBg,
+                        exactArt = useExact,
                     ),
                     palette,
                 )
                 val ms = (System.nanoTime() - t0) / 1_000_000
-                val suffix = if (removeBg) "_bg" else ""
+                val suffix = (if (removeBg) "_bg" else "") + (if (useExact) "_x" else "")
                 val f = File(outDir, "${name}_${gw}_${lvl.name}${suffix}.png")
                 writePng(f, res, 14)
                 println(

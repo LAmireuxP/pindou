@@ -19,6 +19,8 @@ data class GeneratorOptions(
     val autoExposure: Boolean = true,    // 欠曝照片自动提亮（中位亮度 < 70 才触发）
     val regionCleanupEnabled: Boolean = true, // 区域清理：小面积连通碎块并入邻域
     val regionMinArea: Int? = null,           // null = 按过滤等级/格数自适应
+    /** 显式「像素画生成」：放宽画像素检测并按最近画像素取色，不生成过渡色 */
+    val exactArt: Boolean = false,
 )
 
 /** 生成结果：cells 为色卡索引（-1 = 空格），与 palette 配套使用 */
@@ -84,6 +86,7 @@ object PatternGenerator {
         onStage(GenerationStage.DOWNSAMPLE, 0f)
         val sample = ImagePreprocessor.sample(
             exposurePixels, srcW, srcH, options.gridW, options.gridH, options.filterLevel,
+            options.exactArt,
         )
         onStage(GenerationStage.DOWNSAMPLE, 1f)
 
@@ -91,6 +94,8 @@ object PatternGenerator {
         // 都会把 1~2 格宽的花瓣、眼白直接抹掉。这里只做两件事——按面积加权
         // 压色号数、按色号面积多数落格。target 网格上的 argb 只留给背景移除用。
         val art = sample.art
+        // 实际是否落到"逐画像素原色"档（网格被放大时不成立，见 sampleArt）
+        val exactArt = sample.exact
 
         // ② 细节掩码：与邻域均值色差大的格子（眼睛、嘴、高光）锁定。
         //    必须在量化前算好，量化阶段用它回填原始采样色。
@@ -131,6 +136,7 @@ object PatternGenerator {
             mapped = ArtQuantizer.quantize(
                 art, options.gridW, options.gridH, palette,
                 options.filterLevel.artMaxColors, options.excludedCodes,
+                exactArt,
             )
             onStage(GenerationStage.MAP, 1f)
         } else {
@@ -187,7 +193,7 @@ object PatternGenerator {
         onStage(GenerationStage.CLEAN, 0.6f)
 
         // ⑥ 相似色号合并：近同色号并入常用方，消除渐变区的跳号噪点
-        if (options.similarCodeMaxDeltaE > 0.0) {
+        if (options.similarCodeMaxDeltaE > 0.0 && !exactArt) {
             onStage(GenerationStage.MERGE, 0f)
             cleaned = SimilarCodeMerger.merge(
                 cleaned,
@@ -223,6 +229,7 @@ object PatternGenerator {
         } else {
             ImagePreprocessor.sample(
                 exposurePixels, srcW, srcH, options.gridW, options.gridH, FilterLevel.NONE,
+                options.exactArt,
             )
         }
 

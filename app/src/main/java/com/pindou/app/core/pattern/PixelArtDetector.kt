@@ -89,37 +89,56 @@ object PixelArtDetector {
     private var cachedH = 0
     private var cachedValue: Result? = null
     private var cachedValid = false
+    private var cachedRelaxed = false
 
+    /**
+     * @param relaxed 宽松档：用户显式选了「像素画生成」时用。放宽自相关、
+     *   平坦段集中度和格内均匀度门槛，代价是可能把「很像像素画」的照片
+     *   也认成像素画——这个代价由用户的选择承担，比"选了像素画模式却
+     *   走的还是照片算法"要好。自动识别永远用严格档。
+     */
     @Synchronized
-    fun detect(pixels: IntArray, srcW: Int, srcH: Int): Result? {
-        if (cachedValid && cachedPixels === pixels && cachedW == srcW && cachedH == srcH) {
+    fun detect(pixels: IntArray, srcW: Int, srcH: Int, relaxed: Boolean = false): Result? {
+        if (cachedValid && cachedPixels === pixels && cachedW == srcW &&
+            cachedH == srcH && cachedRelaxed == relaxed
+        ) {
             return cachedValue
         }
-        val value = detectUncached(pixels, srcW, srcH)
+        val value = detectUncached(pixels, srcW, srcH, relaxed)
         cachedPixels = pixels
         cachedW = srcW
         cachedH = srcH
         cachedValue = value
         cachedValid = true
+        cachedRelaxed = relaxed
         return value
     }
 
-    private fun detectUncached(pixels: IntArray, srcW: Int, srcH: Int): Result? {
+    private fun detectUncached(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+        relaxed: Boolean,
+    ): Result? {
         if (srcW < 32 || srcH < 32) return null
+        val minAutocorr = if (relaxed) 0.40 else MIN_AUTOCORR
+        val minAxisCorr = if (relaxed) 0.55 else MIN_AXIS_CORR
+        val minRunConc = if (relaxed) 0.18 else MIN_RUN_CONCENTRATION
+        val maxCellStd = if (relaxed) 2.8 else MAX_CELL_STD
         val gx = gradientProfile(pixels, srcW, srcH, horizontal = true)
         val gy = gradientProfile(pixels, srcW, srcH, horizontal = false)
         val corrX = autocorrelation(gx)
         val corrY = autocorrelation(gy)
-        val fx = fundamentalLag(corrX) ?: return null
-        val fy = fundamentalLag(corrY) ?: return null
+        val fx = fundamentalLag(corrX, minAutocorr) ?: return null
+        val fy = fundamentalLag(corrY, minAutocorr) ?: return null
         if (abs(fx - fy).toDouble() / max(fx, fy) > AXIS_TOLERANCE) return null
-        if (min(corrX[fx], corrY[fy]) < MIN_AXIS_CORR) return null
+        if (min(corrX[fx], corrY[fy]) < minAxisCorr) return null
 
         val b0 = ((fx + fy) / 2.0).roundToInt()
         val runX = runHistogram(pixels, srcW, srcH, horizontal = true)
         val runY = runHistogram(pixels, srcW, srcH, horizontal = false)
-        if (concentration(runX, b0) < MIN_RUN_CONCENTRATION) return null
-        if (concentration(runY, b0) < MIN_RUN_CONCENTRATION) return null
+        if (concentration(runX, b0) < minRunConc) return null
+        if (concentration(runY, b0) < minRunConc) return null
 
         // 相位只在整数基频上估计：块长本身是小数时，相位与块长互相补偿，
         // 同时搜索会让相位漂到半个块外（实测 13px 的图漂到 12.5/3.25）。
@@ -137,10 +156,72 @@ object PixelArtDetector {
         val blockH = (srcH - oy) / artH
         if (blockW <= 0.0 || blockH <= 0.0) return null
         if (abs(blockW - blockH) / max(blockW, blockH) > AXIS_TOLERANCE) return null
-        if (cellStdMedian(pixels, srcW, srcH, blockW, blockH, ox, oy, artW, artH) > MAX_CELL_STD) {
+        if (cellStdMedian(pixels, srcW, srcH, blockW, blockH, ox, oy, artW, artH) > maxCellStd) {
             return null
         }
         return Result(blockW, blockH, artW, artH, ox, oy)
+    }
+
+    /**
+     * 强制档：用户在「像素画生成」入口导入时调用。
+     *
+     * 逐级放宽：严格 → 宽松 → 平坦段众数兜底。兜底这一级只看"最常见的
+     * 同色游程长度"，不做自相关和格内均匀度——一张被二次压缩、带缩放
+     * 模糊的像素画，自相关峰会掉到 0.3 以下，但平坦段长度仍然聚在块长上。
+     */
+    @Synchronized
+    fun detectForced(pixels: IntArray, srcW: Int, srcH: Int): Result? {
+        detect(pixels, srcW, srcH, relaxed = false)?.let { return it }
+        detect(pixels, srcW, srcH, relaxed = true)?.let { return it }
+        return detectByRuns(pixels, srcW, srcH)
+    }
+
+    private fun detectByRuns(pixels: IntArray, srcW: Int, srcH: Int): Result? {
+        if (srcW < 32 || srcH < 32) return null
+        val runX = runHistogram(pixels, srcW, srcH, horizontal = true)
+        val runY = runHistogram(pixels, srcW, srcH, horizontal = false)
+        val bx = modalRun(runX) ?: return null
+        val by = modalRun(runY) ?: return null
+        if (abs(bx - by) > max(2, max(bx, by) / 4)) return null
+        val b = ((bx + by) / 2.0).roundToInt()
+        if (b < 4 || b > 64) return null
+        val gx = gradientProfile(pixels, srcW, srcH, horizontal = true)
+        val gy = gradientProfile(pixels, srcW, srcH, horizontal = false)
+        val ox = bestPhase(gx, b)
+        val oy = bestPhase(gy, b)
+        val artW = ((srcW - ox) / b).roundToInt()
+        val artH = ((srcH - oy) / b).roundToInt()
+        if (artW < 8 || artH < 8 || artW > 200 || artH > 200) return null
+        if (artW * artH > MAX_ART_CELLS) return null
+        val blockW = (srcW - ox) / artW
+        val blockH = (srcH - oy) / artH
+        if (blockW <= 0.0 || blockH <= 0.0) return null
+        // 兜底档只挡"格内明显是连续渐变"的照片（方差大），不再要求纯色
+        if (cellStdMedian(pixels, srcW, srcH, blockW, blockH, ox, oy, artW, artH) > 4.0) {
+            return null
+        }
+        return Result(blockW, blockH, artW, artH, ox, oy)
+    }
+
+    /** 平坦段直方图里计数最高的长度（加权中位数附近取峰），要求占比 ≥ 10% */
+    private fun modalRun(run: Pair<IntArray, Int>): Int? {
+        val (hist, total) = run
+        if (total < 40) return null
+        var bestLen = 0
+        var bestCnt = 0
+        for (l in 3 until hist.size) {
+            if (hist[l] > bestCnt) {
+                bestCnt = hist[l]
+                bestLen = l
+            }
+        }
+        if (bestLen == 0) return null
+        // 合并相邻 ±1 的计数：块长常是 12.5，直方图会劈成 12 和 13 两个峰
+        var merged = bestCnt
+        if (bestLen > 3) merged += hist[bestLen - 1]
+        if (bestLen + 1 < hist.size) merged += hist[bestLen + 1]
+        if (merged.toDouble() / total < 0.10) return null
+        return bestLen
     }
 
     /**
@@ -218,14 +299,14 @@ object PixelArtDetector {
      * 取**最小**合格 lag 是关键：真块长 12 的图在 24 处也有一个几乎等高的
      * 峰（每个边界每隔两块重复一次），取大的会把网格直接减半。
      */
-    private fun fundamentalLag(corr: DoubleArray): Int? {
+    private fun fundamentalLag(corr: DoubleArray, minAutocorr: Double): Int? {
         var best = 0.0
         for (l in MIN_BLOCK..MAX_BLOCK) {
             if (!isLocalMax(corr, l)) continue
             if (corr[l] > best) best = corr[l]
         }
-        if (best < MIN_AUTOCORR) return null
-        val floor = max(MIN_AUTOCORR, best * 0.80)
+        if (best < minAutocorr) return null
+        val floor = max(minAutocorr, best * 0.80)
         for (l in MIN_BLOCK..MAX_BLOCK) {
             if (isLocalMax(corr, l) && corr[l] >= floor) return l
         }

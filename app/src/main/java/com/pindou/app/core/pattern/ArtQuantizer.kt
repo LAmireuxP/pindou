@@ -44,6 +44,8 @@ object ArtQuantizer {
         palette: BeadPalette,
         maxColors: Int,
         excludedCodes: Set<String>,
+        /** 显式像素画模式：不并桶、不做噪声合并，色号必须一一对应原画的色层 */
+        exact: Boolean = false,
     ): IntArray {
         val n = art.w * art.h
         if (n == 0) return IntArray(gridW * gridH) { -1 }
@@ -56,7 +58,9 @@ object ArtQuantizer {
         val uidOfPixel = IntArray(n)
         var uidCount = 0
         for (i in 0 until n) {
-            val key = art.argb[i] and 0xF8F8F8
+            // exact 档保留全部 24 位：221/272 全色系里相邻两个色号只差几个
+            // 单位，丢低 3 位会把它们并成一个，整张图少一层色
+            val key = if (exact) art.argb[i] and 0xFFFFFF else art.argb[i] and 0xF8F8F8
             val uid = bucketToUid.getOrPut(key) { uidCount++ }
             uidOfPixel[i] = uid
         }
@@ -93,21 +97,26 @@ object ArtQuantizer {
         //    背景上的一层灰。先按 ΔE ≤ 3 贪心合并（重色块优先当代表），
         //    合并后的色数才是这张图"真正的配色数"。
         //    复杂度 O(U²)，U 在 78 宽下通常 < 200。
-        val order = (0 until uidCount).sortedByDescending { totalW[it] }
-        val groupOf = IntArray(uidCount) { -1 }
-        var groupCount = 0
-        for (u in order) {
-            if (groupOf[u] >= 0) continue
-            val g = groupCount++
-            groupOf[u] = g
-            for (v in order) {
-                if (groupOf[v] >= 0) continue
-                if (labDistance(lab, u, v) <= NOISE_MERGE_DELTA) groupOf[v] = g
+        val groupOf = IntArray(uidCount) { if (exact) it else -1 }
+        var groupCount = if (exact) uidCount else 0
+        if (!exact) {
+            val order = (0 until uidCount).sortedByDescending { totalW[it] }
+            for (u in order) {
+                if (groupOf[u] >= 0) continue
+                val g = groupCount++
+                groupOf[u] = g
+                for (v in order) {
+                    if (groupOf[v] >= 0) continue
+                    if (labDistance(lab, u, v) <= NOISE_MERGE_DELTA) groupOf[v] = g
+                }
             }
         }
         val gLab = FloatArray(groupCount * 3)
         val gW = DoubleArray(groupCount)
-        run {
+        if (exact) {
+            System.arraycopy(lab, 0, gLab, 0, uidCount * 3)
+            System.arraycopy(totalW, 0, gW, 0, uidCount)
+        } else run {
             val gl = DoubleArray(groupCount)
             val ga = DoubleArray(groupCount)
             val gb = DoubleArray(groupCount)

@@ -36,6 +36,7 @@ import com.pindou.app.ui.theme.Spacing
 fun CreateScreen(
     vm: AppViewModel,
     onPickPhoto: () -> Unit,
+    onPickPixel: () -> Unit,
     onPickChart: () -> Unit,
 ) {
     Column(
@@ -62,7 +63,7 @@ fun CreateScreen(
                 modifier = Modifier.weight(1f),
                 title = "像素画生成",
                 subtitle = "按画像素 1:1 还原",
-                onClick = onPickPhoto,
+                onClick = onPickPixel,
             ) { ShIconTile(Icons.Rounded.GridOn, ClayColors.TintSky, ClayColors.BrandBlue) }
         }
 
