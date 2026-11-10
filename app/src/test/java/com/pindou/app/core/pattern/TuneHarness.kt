@@ -75,6 +75,13 @@ class TuneHarness {
                 }
                 println("STROKE diffVsSample=$changedByInk")
             }
+            run {
+                val d = PixelArtDetector.detect(pixels, w, h)
+                println(
+                    if (d == null) "ART none" else
+                        "ART artW=${d.artW} artH=${d.artH} bw=${"%.2f".format(d.blockW)} bh=${"%.2f".format(d.blockH)} ox=${"%.1f".format(d.ox)} oy=${"%.1f".format(d.oy)}"
+                )
+            }
             for (lvl in levels) {
                 val t0 = System.nanoTime()
                 val res = PatternGenerator.generate(

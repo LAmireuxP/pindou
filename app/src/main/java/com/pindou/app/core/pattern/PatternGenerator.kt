@@ -13,7 +13,7 @@ data class GeneratorOptions(
     val ditheringEnabled: Boolean = false, // 抖动，默认关
     val removeBackground: Boolean = false, // 背景移除，默认关
     val backgroundTolerance: Double = 12.0, // 背景 ΔE 容差
-    val similarCodeMaxDeltaE: Double = 3.0, // 相似色号合并阈值；0 = 关闭
+    val similarCodeMaxDeltaE: Double = 6.0, // 相似色号合并阈值；0 = 关闭
     val filterLevel: FilterLevel = FilterLevel.MEDIUM, // 过滤等级（对齐颂拼豆四档）
     val detailThreshold: Double? = null, // 细节保护阈值（Lab ΔE）；null = 跟随过滤等级
     val autoExposure: Boolean = true,    // 欠曝照片自动提亮（中位亮度 < 70 才触发）

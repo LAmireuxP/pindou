@@ -111,7 +111,11 @@ object ImagePreprocessor {
         // 5 张照片全部拒绝。命中后颜色只取源图里真实存在的那些，不会被
         // 白底稀释成灰粉。
         val art = PixelArtDetector.detect(pixels, srcW, srcH)
-        if (art != null) {
+        // 目标网格比画像素网格细的时候不能吸附回画像素：一格只覆盖半个
+        // 画像素，再取块色等于把花瓣渐变、眼睛高光全压成块色（实测 735x658
+        // 的软像素画 104 宽，flat 0.70、de 8.7）。画网格只作为颜色参照，
+        // 细节走原生面积采样。
+        if (art != null && gridW <= art.artW + 2) {
             return sampleArt(pixels, srcW, srcH, gridW, gridH, art)
         }
         val iw = gridW * SCALE
