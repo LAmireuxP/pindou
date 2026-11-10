@@ -1,0 +1,129 @@
+{
+ "brand": "ALL24",
+ "brandLabel": "全色系 24 色",
+ "beadSize": "2.6mm",
+ "version": 1,
+ "source": "实物色卡整理",
+ "colors": [
+  {
+   "code": "A4",
+   "name": "黄色",
+   "hex": "#FBED56"
+  },
+  {
+   "code": "A6",
+   "name": "黄色",
+   "hex": "#FEAC4C"
+  },
+  {
+   "code": "A7",
+   "name": "黄色",
+   "hex": "#FE8B4C"
+  },
+  {
+   "code": "B3",
+   "name": "绿色",
+   "hex": "#9EF780"
+  },
+  {
+   "code": "B5",
+   "name": "绿色",
+   "hex": "#35E352"
+  },
+  {
+   "code": "B8",
+   "name": "绿色",
+   "hex": "#1C9C4F"
+  },
+  {
+   "code": "C3",
+   "name": "蓝色",
+   "hex": "#A0E2FB"
+  },
+  {
+   "code": "C5",
+   "name": "蓝色",
+   "hex": "#01ACEB"
+  },
+  {
+   "code": "C8",
+   "name": "蓝色",
+   "hex": "#0F54C0"
+  },
+  {
+   "code": "D6",
+   "name": "紫色",
+   "hex": "#AC7BDE"
+  },
+  {
+   "code": "D7",
+   "name": "紫色",
+   "hex": "#8854B3"
+  },
+  {
+   "code": "D9",
+   "name": "紫色",
+   "hex": "#D5B9F8"
+  },
+  {
+   "code": "E2",
+   "name": "粉色",
+   "hex": "#FECDDF"
+  },
+  {
+   "code": "E4",
+   "name": "粉色",
+   "hex": "#E8649E"
+  },
+  {
+   "code": "F5",
+   "name": "红色",
+   "hex": "#E7002F"
+  },
+  {
+   "code": "G1",
+   "name": "棕色",
+   "hex": "#FFE2CE"
+  },
+  {
+   "code": "G5",
+   "name": "棕色",
+   "hex": "#EDB045"
+  },
+  {
+   "code": "G7",
+   "name": "棕色",
+   "hex": "#9D5B3E"
+  },
+  {
+   "code": "H1",
+   "name": "灰色",
+   "hex": "#FFFFFF"
+  },
+  {
+   "code": "H2",
+   "name": "灰色",
+   "hex": "#FEFFFF"
+  },
+  {
+   "code": "H3",
+   "name": "灰色",
+   "hex": "#B6B1BA"
+  },
+  {
+   "code": "H4",
+   "name": "灰色",
+   "hex": "#89858C"
+  },
+  {
+   "code": "H5",
+   "name": "灰色",
+   "hex": "#48464E"
+  },
+  {
+   "code": "H7",
+   "name": "灰色",
+   "hex": "#000000"
+  }
+ ]
+}

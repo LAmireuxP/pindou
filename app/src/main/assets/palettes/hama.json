@@ -1,0 +1,454 @@
+{
+  "brand": "Hama",
+  "brandLabel": "Hama",
+  "beadSize": "5mm",
+  "version": 1,
+  "source": "xuange6610/PindouAI lib/data/multi_palette_data.dart（Apache-2.0）；Artkal 色值源自 real-jiakai/perler-studio 公开图表快照",
+  "colors": [
+    {
+      "code": "H01",
+      "name": "White",
+      "hex": "#ECEDED"
+    },
+    {
+      "code": "H02",
+      "name": "Cream",
+      "hex": "#F0E8B9"
+    },
+    {
+      "code": "H03",
+      "name": "Gold",
+      "hex": "#F0B901"
+    },
+    {
+      "code": "H04",
+      "name": "Orange",
+      "hex": "#E64F27"
+    },
+    {
+      "code": "H05",
+      "name": "Red",
+      "hex": "#B63136"
+    },
+    {
+      "code": "H06",
+      "name": "Pink",
+      "hex": "#E1889F"
+    },
+    {
+      "code": "H07",
+      "name": "Purple",
+      "hex": "#694A82"
+    },
+    {
+      "code": "H08",
+      "name": "Dark Blue",
+      "hex": "#2C4690"
+    },
+    {
+      "code": "H09",
+      "name": "Blue",
+      "hex": "#305CB0"
+    },
+    {
+      "code": "H10",
+      "name": "Dark Green",
+      "hex": "#256847"
+    },
+    {
+      "code": "H11",
+      "name": "Teal",
+      "hex": "#49AE89"
+    },
+    {
+      "code": "H12",
+      "name": "Brown",
+      "hex": "#534137"
+    },
+    {
+      "code": "H13",
+      "name": "Transparent Red",
+      "hex": "#C02435"
+    },
+    {
+      "code": "H14",
+      "name": "Transparent Yellow",
+      "hex": "#E4AA32"
+    },
+    {
+      "code": "H15",
+      "name": "Transparent Blue",
+      "hex": "#487ED5"
+    },
+    {
+      "code": "H16",
+      "name": "Transparent Green",
+      "hex": "#37B876"
+    },
+    {
+      "code": "H17",
+      "name": "Gray",
+      "hex": "#83888A"
+    },
+    {
+      "code": "H18",
+      "name": "Black",
+      "hex": "#2E2F31"
+    },
+    {
+      "code": "H19",
+      "name": "Clear",
+      "hex": "#D8D2CE"
+    },
+    {
+      "code": "H20",
+      "name": "Dark Brown",
+      "hex": "#7F332A"
+    },
+    {
+      "code": "H21",
+      "name": "Tan",
+      "hex": "#A5693F"
+    },
+    {
+      "code": "H22",
+      "name": "Burgundy",
+      "hex": "#A52D36"
+    },
+    {
+      "code": "H24",
+      "name": "Translucent Purple",
+      "hex": "#683E9A"
+    },
+    {
+      "code": "H25",
+      "name": "Translucent Brown",
+      "hex": "#87593D"
+    },
+    {
+      "code": "H26",
+      "name": "Salmon",
+      "hex": "#DE9B90"
+    },
+    {
+      "code": "H27",
+      "name": "Tan Light",
+      "hex": "#DEB48B"
+    },
+    {
+      "code": "H28",
+      "name": "Dark Gray",
+      "hex": "#363F38"
+    },
+    {
+      "code": "H29",
+      "name": "Magenta",
+      "hex": "#B9395E"
+    },
+    {
+      "code": "H30",
+      "name": "Maroon",
+      "hex": "#592F38"
+    },
+    {
+      "code": "H31",
+      "name": "Steel Blue",
+      "hex": "#6797AE"
+    },
+    {
+      "code": "H32",
+      "name": "Neon Fuchsia",
+      "hex": "#FF208D"
+    },
+    {
+      "code": "H33",
+      "name": "Bright Red",
+      "hex": "#FF3956"
+    },
+    {
+      "code": "H34",
+      "name": "Neon Yellow",
+      "hex": "#E5EF13"
+    },
+    {
+      "code": "H35",
+      "name": "Neon Red",
+      "hex": "#FF2833"
+    },
+    {
+      "code": "H36",
+      "name": "Neon Blue",
+      "hex": "#2353B0"
+    },
+    {
+      "code": "H37",
+      "name": "Neon Green",
+      "hex": "#06B73C"
+    },
+    {
+      "code": "H38",
+      "name": "Neon Orange",
+      "hex": "#FD8600"
+    },
+    {
+      "code": "H39",
+      "name": "Fluorescent Yellow",
+      "hex": "#F1F21C"
+    },
+    {
+      "code": "H40",
+      "name": "Fluorescent Orange",
+      "hex": "#FE630B"
+    },
+    {
+      "code": "H41",
+      "name": "Fluorescent Blue",
+      "hex": "#2659B2"
+    },
+    {
+      "code": "H42",
+      "name": "Fluorescent Green",
+      "hex": "#0CBD51"
+    },
+    {
+      "code": "H43",
+      "name": "Bright Yellow",
+      "hex": "#F0EA37"
+    },
+    {
+      "code": "H44",
+      "name": "Rose",
+      "hex": "#EE6972"
+    },
+    {
+      "code": "H45",
+      "name": "Mauve",
+      "hex": "#886DB9"
+    },
+    {
+      "code": "H46",
+      "name": "Cornflower Blue",
+      "hex": "#629ED7"
+    },
+    {
+      "code": "H47",
+      "name": "Green",
+      "hex": "#83CB70"
+    },
+    {
+      "code": "H48",
+      "name": "Orchid",
+      "hex": "#CF70B7"
+    },
+    {
+      "code": "H49",
+      "name": "Ocean Blue",
+      "hex": "#4998BC"
+    },
+    {
+      "code": "H60",
+      "name": "Burnt Orange",
+      "hex": "#F49422"
+    },
+    {
+      "code": "H61",
+      "name": "Gold Metallic",
+      "hex": "#D99350"
+    },
+    {
+      "code": "H62",
+      "name": "Silver Metallic",
+      "hex": "#48474A"
+    },
+    {
+      "code": "H63",
+      "name": "Bronze Metallic",
+      "hex": "#42312F"
+    },
+    {
+      "code": "H64",
+      "name": "Pearl",
+      "hex": "#EFEBE4"
+    },
+    {
+      "code": "H70",
+      "name": "Periwinkle",
+      "hex": "#B6B6D4"
+    },
+    {
+      "code": "H71",
+      "name": "Charcoal",
+      "hex": "#464541"
+    },
+    {
+      "code": "H72",
+      "name": "Translucent Pink",
+      "hex": "#F097B0"
+    },
+    {
+      "code": "H73",
+      "name": "Translucent Aqua",
+      "hex": "#59AEF5"
+    },
+    {
+      "code": "H74",
+      "name": "Translucent Lilac",
+      "hex": "#5B55BD"
+    },
+    {
+      "code": "H75",
+      "name": "Caramel",
+      "hex": "#BF7B4D"
+    },
+    {
+      "code": "H76",
+      "name": "Chocolate",
+      "hex": "#663317"
+    },
+    {
+      "code": "H77",
+      "name": "Beige",
+      "hex": "#EDE7DF"
+    },
+    {
+      "code": "H78",
+      "name": "Light Orange",
+      "hex": "#FFC99A"
+    },
+    {
+      "code": "H79",
+      "name": "Apricot",
+      "hex": "#F08643"
+    },
+    {
+      "code": "H82",
+      "name": "Wine",
+      "hex": "#962F5C"
+    },
+    {
+      "code": "H83",
+      "name": "Teal Blue",
+      "hex": "#0178A4"
+    },
+    {
+      "code": "H84",
+      "name": "Olive",
+      "hex": "#8B924C"
+    },
+    {
+      "code": "H95",
+      "name": "Light Pink",
+      "hex": "#F8CCE0"
+    },
+    {
+      "code": "H96",
+      "name": "Lilac",
+      "hex": "#D4B1E3"
+    },
+    {
+      "code": "H97",
+      "name": "Light Blue",
+      "hex": "#A2D3FE"
+    },
+    {
+      "code": "H98",
+      "name": "Mint",
+      "hex": "#9ADBB1"
+    },
+    {
+      "code": "H101",
+      "name": "Light Green",
+      "hex": "#A9C39B"
+    },
+    {
+      "code": "H102",
+      "name": "Forest Green",
+      "hex": "#356B2D"
+    },
+    {
+      "code": "H103",
+      "name": "Yellow",
+      "hex": "#FFE660"
+    },
+    {
+      "code": "H104",
+      "name": "Lime Green",
+      "hex": "#BCD122"
+    },
+    {
+      "code": "H105",
+      "name": "Peach",
+      "hex": "#FFAC78"
+    },
+    {
+      "code": "H106",
+      "name": "Lavender",
+      "hex": "#CCC5ED"
+    },
+    {
+      "code": "H107",
+      "name": "Sky Blue",
+      "hex": "#6A87C1"
+    },
+    {
+      "code": "H108",
+      "name": "Aubergine",
+      "hex": "#2A2536"
+    },
+    {
+      "code": "H109",
+      "name": "Cloudy Grey",
+      "hex": "#8A847F"
+    },
+    {
+      "code": "H110",
+      "name": "Matcha",
+      "hex": "#838956"
+    },
+    {
+      "code": "H111",
+      "name": "Dark Blush",
+      "hex": "#835854"
+    },
+    {
+      "code": "H112",
+      "name": "Blush",
+      "hex": "#AD8A82"
+    },
+    {
+      "code": "H113",
+      "name": "Aqua",
+      "hex": "#5F887B"
+    },
+    {
+      "code": "H114",
+      "name": "Cherry Red",
+      "hex": "#9A2C31"
+    },
+    {
+      "code": "H115",
+      "name": "Bright Green",
+      "hex": "#6E975F"
+    },
+    {
+      "code": "H116",
+      "name": "Midnight Blue",
+      "hex": "#222838"
+    },
+    {
+      "code": "H117",
+      "name": "Taupe Grey",
+      "hex": "#777169"
+    },
+    {
+      "code": "H118",
+      "name": "Maroon Red",
+      "hex": "#612932"
+    },
+    {
+      "code": "H119",
+      "name": "Sky Blue Clear",
+      "hex": "#4167B4"
+    }
+  ]
+}

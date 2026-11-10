@@ -1,0 +1,140 @@
+package com.pindou.app.core.data
+
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.PrimaryKey
+import androidx.room.Query
+import androidx.room.RoomDatabase
+import kotlinx.coroutines.flow.Flow
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+/** 项目：图纸的可再编辑存档 */
+@Entity(tableName = "projects")
+data class ProjectEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val width: Int,
+    val height: Int,
+    val beadSize: String,
+    val paletteBrand: String,
+    /** 每格色卡索引，int32 小端序列化（-1 = 空格） */
+    val cells: ByteArray,
+    /** 每格锁定标记，1 字节一格 */
+    val locked: ByteArray,
+    val thumbnailPath: String?,
+    val createdAt: Long,
+    val updatedAt: Long,
+    /** 施工进度：每格 1 字节（1 = 已拼） */
+    val doneCells: ByteArray? = null,
+    /** 施工引导方向：0 = 按行，1 = 按列 */
+    val buildOrientation: Int = 0,
+    /** 当前施工行/列号 */
+    val buildCursor: Int = 0,
+    /** 页数（多页图纸；cells/locked 长度 = pages × w × h） */
+    val pages: Int = 1,
+    /** 收藏标记 */
+    val fav: Boolean = false,
+    /** 专辑名（空 = 未分组） */
+    val album: String = "",
+    /** 参考原图路径（编辑器对比叠加用） */
+    val refPath: String? = null,
+)
+
+@Dao
+interface ProjectDao {
+    @Query("SELECT * FROM projects ORDER BY updatedAt DESC")
+    fun observeAll(): Flow<List<ProjectEntity>>
+
+    @Query("SELECT * FROM projects WHERE id = :id")
+    suspend fun getById(id: Long): ProjectEntity?
+
+    @Insert
+    suspend fun insert(project: ProjectEntity): Long
+
+    // 编辑器完成：局部修改格数据与锁（含页数），保留施工进度（进度仅覆盖第 1 页）
+    @Query("UPDATE projects SET cells = :cells, locked = :locked, pages = :pages, thumbnailPath = :thumb, updatedAt = :now WHERE id = :id")
+    suspend fun updateCells(id: Long, cells: ByteArray, locked: ByteArray, pages: Int, thumb: String?, now: Long)
+
+    // 重新生成：图纸整体变化（尺寸、色卡、格数据），施工进度随图纸作废（置空、游标归零），
+    // 避免 doneCells 与新 cells 尺寸错位
+    @Query("UPDATE projects SET width = :width, height = :height, beadSize = :beadSize, paletteBrand = :paletteBrand, cells = :cells, locked = :locked, pages = 1, thumbnailPath = :thumb, doneCells = NULL, buildCursor = 0, updatedAt = :now WHERE id = :id")
+    suspend fun updateContent(
+        id: Long,
+        width: Int,
+        height: Int,
+        beadSize: String,
+        paletteBrand: String,
+        cells: ByteArray,
+        locked: ByteArray,
+        thumb: String?,
+        now: Long,
+    )
+
+    @Query("UPDATE projects SET name = :name, updatedAt = :now WHERE id = :id")
+    suspend fun rename(id: Long, name: String, now: Long)
+
+    @Query("UPDATE projects SET doneCells = :done, buildOrientation = :orientation, buildCursor = :cursor, updatedAt = :now WHERE id = :id")
+    suspend fun updateBuildProgress(id: Long, done: ByteArray, orientation: Int, cursor: Int, now: Long)
+
+    @Query("UPDATE projects SET fav = :fav, updatedAt = :now WHERE id = :id")
+    suspend fun setFav(id: Long, fav: Boolean, now: Long)
+
+    @Query("UPDATE projects SET album = :album, updatedAt = :now WHERE id = :id")
+    suspend fun setAlbum(id: Long, album: String, now: Long)
+
+    @Query("UPDATE projects SET refPath = :path, updatedAt = :now WHERE id = :id")
+    suspend fun setRefPath(id: Long, path: String?, now: Long)
+
+    @Query("DELETE FROM projects WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+
+@Database(entities = [ProjectEntity::class], version = 3, exportSchema = false)
+abstract class PindouDatabase : RoomDatabase() {
+    abstract fun projectDao(): ProjectDao
+
+    companion object {
+        /** v1 → v2：新增施工进度三列（老数据保持默认值） */
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE projects ADD COLUMN doneCells BLOB")
+                db.execSQL("ALTER TABLE projects ADD COLUMN buildOrientation INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE projects ADD COLUMN buildCursor INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** v2 → v3：多页、收藏、专辑、参考图四列（老数据保持默认值） */
+        val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE projects ADD COLUMN pages INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE projects ADD COLUMN fav INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE projects ADD COLUMN album TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE projects ADD COLUMN refPath TEXT")
+            }
+        }
+    }
+}
+
+/** IntArray / BooleanArray 与字节数组互转（仅数据层使用） */
+object GridCodec {
+
+    fun encodeCells(cells: IntArray): ByteArray {
+        val buf = ByteBuffer.allocate(cells.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+        for (c in cells) buf.putInt(c)
+        return buf.array()
+    }
+
+    fun decodeCells(bytes: ByteArray): IntArray {
+        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        return IntArray(bytes.size / 4) { buf.getInt() }
+    }
+
+    fun encodeLocks(locks: BooleanArray): ByteArray =
+        ByteArray(locks.size) { if (locks[it]) 1 else 0 }
+
+    fun decodeLocks(bytes: ByteArray): BooleanArray =
+        BooleanArray(bytes.size) { bytes[it] != 0.toByte() }
+}
