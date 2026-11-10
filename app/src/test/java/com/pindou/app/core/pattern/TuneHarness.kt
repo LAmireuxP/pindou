@@ -34,35 +34,76 @@ class TuneHarness {
         } else FilterLevel.entries
         val removeBg = System.getenv("TUNE_BG") == "1"
         val exact = System.getenv("TUNE_EXACT") == "1"
+        // TUNE_H：显式指定格高。给了就按 gw:gh 的比例把源图中位裁切后再采样，
+        // 这样 60x60 这种正方形目标测的是"真正方形网格"，不会被拉伸。
+        val forcedGh = System.getenv("TUNE_H")?.trim()?.toIntOrNull()
         val paletteName = System.getenv("TUNE_PALETTE") ?: "all_solid_272.json"
+        // TUNE_PAD：给源图四周补白边，模拟"主体只占中间一块"的输入
+        val pad = System.getenv("TUNE_PAD")?.toDoubleOrNull() ?: 0.0
+        // TUNE_NOFRAME=1：关掉自动取景，用来对比裁与不裁的差距
+        val autoFrame = System.getenv("TUNE_NOFRAME") != "1"
 
         val palette = PaletteJson.parse(File("src/main/assets/palettes/$paletteName").readText())
         val targets = if (want == "all") entries else entries.filter { it.first == want }
         if (targets.isEmpty()) return
-        for (entry in targets) runOne(entry, widths, levels, removeBg, exact, palette)
+        for (entry in targets) runOne(entry, widths, forcedGh, levels, removeBg, exact, palette, pad, autoFrame)
     }
 
     private fun runOne(
         entry: Triple<String, Int, Int>,
         widths: List<Int>,
+        forcedGh: Int?,
         levels: List<FilterLevel>,
         removeBg: Boolean,
         exact: Boolean,
         palette: com.pindou.app.core.palette.BeadPalette,
+        pad: Double,
+        autoFrame: Boolean,
     ) {
         val (name, w, h) = entry
         val bytes = inputDir.resolve("$name.rgb").readBytes()
-        val pixels = IntArray(w * h)
+        var pixels = IntArray(w * h)
+        var pw = w
+        var ph = h
         for (i in pixels.indices) {
             pixels[i] = (0xFF shl 24) or
                 ((bytes[3 * i].toInt() and 0xFF) shl 16) or
                 ((bytes[3 * i + 1].toInt() and 0xFF) shl 8) or
                 (bytes[3 * i + 2].toInt() and 0xFF)
         }
+        if (pad > 0.0) {
+            val mx = (w * pad).toInt()
+            val my = (h * pad).toInt()
+            pw = w + mx * 2
+            ph = h + my * 2
+            val padded = IntArray(pw * ph) { 0xFFFFFFFF.toInt() }
+            for (y in 0 until h) System.arraycopy(pixels, y * w, padded, (y + my) * pw + mx, w)
+            pixels = padded
+            println("PAD src=${w}x$h -> ${pw}x$ph (+${mx},+${my})")
+        }
         for (gw in widths) {
-            val gh = Math.round(gw.toDouble() * h / w).toInt().coerceIn(2, 400)
+            // 有 forcedGh 时按目标格子比例裁切源图，格高不再由源图宽高比决定
+            val gh = forcedGh ?: Math.round(gw.toDouble() * ph / pw).toInt().coerceIn(2, 400)
+            val crop = if (forcedGh != null) cropToAspect(pixels, pw, ph, gw, gh) else Triple(pixels, pw, ph)
+            if (forcedGh != null) println("CROP src=${pw}x$ph -> ${crop.second}x${crop.third} target=$gw x $gh")
+            // 主体实际拿到多少格：这是"同样 60×60 为什么有的图清楚有的图糊"的根因。
+            // 空白边也吃格子，主体只占 35 格时，五官就只剩几颗豆。
             run {
-                val st = StrokeSkeleton.analyze(pixels, w, h, gw, gh)
+                val fr = AutoFrame.apply(crop.first, crop.second, crop.third, gw, gh)
+                val cellNoFrame = fr.subjectW.toDouble() / crop.second * gw
+                val cellFramed = if (fr.trimmed) {
+                    fr.subjectW.toDouble() / fr.w * gw
+                } else {
+                    cellNoFrame
+                }
+                println(
+                    "SUBJECT ${name} subject=${fr.subjectW}x${fr.subjectH} " +
+                        "cellsAcross=${"%.0f".format(cellFramed)} (noFrame=${"%.0f".format(cellNoFrame)}) " +
+                        "trimmed=${fr.trimmed}"
+                )
+            }
+            run {
+                val st = StrokeSkeleton.analyze(crop.first, crop.second, crop.third, gw, gh)
                 val hitCells = st.hits.count { it > 0 }
                 val solidCells = st.coverage.count { it >= 0.80f }
                 println(
@@ -70,7 +111,7 @@ class TuneHarness {
                         "solidCells=$solidCells paper=${"%.3f".format(st.paperShare)} " +
                         "ink=${"%.3f".format(st.inkShare)}"
                 )
-                val smp = ImagePreprocessor.sample(pixels, w, h, gw, gh, FilterLevel.NONE)
+                val smp = ImagePreprocessor.sample(crop.first, crop.second, crop.third, gw, gh, FilterLevel.NONE)
                 var changedByInk = 0
                 for (i in 0 until gw * gh) {
                     if (st.hits[i] > 0 && smp.argb[i] != st.inkArgb[i]) changedByInk++
@@ -78,14 +119,14 @@ class TuneHarness {
                 println("STROKE diffVsSample=$changedByInk")
             }
             run {
-                val d = PixelArtDetector.detect(pixels, w, h)
+                val d = PixelArtDetector.detect(crop.first, crop.second, crop.third)
                 println(
                     if (d == null) "ART none" else
                         "ART artW=${d.artW} artH=${d.artH} bw=${"%.2f".format(d.blockW)} bh=${"%.2f".format(d.blockH)} ox=${"%.1f".format(d.ox)} oy=${"%.1f".format(d.oy)}"
                 )
             }
             if (exact) {
-                val f = PixelArtDetector.detectForced(pixels, w, h)
+                val f = PixelArtDetector.detectForced(crop.first, crop.second, crop.third)
                 println(
                     if (f == null) "ARTX none" else
                         "ARTX artW=${f.artW} artH=${f.artH} bw=${"%.2f".format(f.blockW)} ox=${"%.1f".format(f.ox)}"
@@ -95,27 +136,42 @@ class TuneHarness {
                 val useExact = exact && lvl == FilterLevel.NONE
                 val t0 = System.nanoTime()
                 val res = PatternGenerator.generate(
-                    pixels, w, h,
+                    crop.first, crop.second, crop.third,
                     GeneratorOptions(
                         gridW = gw, gridH = gh, filterLevel = lvl,
                         removeBackground = removeBg,
                         exactArt = useExact,
+                        autoFrame = autoFrame,
                     ),
                     palette,
                 )
                 val ms = (System.nanoTime() - t0) / 1_000_000
-                val suffix = (if (removeBg) "_bg" else "") + (if (useExact) "_x" else "")
-                val f = File(outDir, "${name}_${gw}_${lvl.name}${suffix}.png")
+                val suffix = (if (removeBg) "_bg" else "") + (if (useExact) "_x" else "") +
+                    (if (pad > 0.0) "_pad" else "") + (if (!autoFrame) "_nf" else "")
+                val f = File(outDir, "${name}_${gw}${if (forcedGh != null) "x$gh" else ""}_${lvl.name}${suffix}.png")
                 writePng(f, res, 14)
                 println(
                     "TUNE ${f.name} ${res.width}x${res.height} colors=${res.usage().size} " +
-                        "score=${res.quality.score} art=${res.pixelArt} ${ms}ms " +
+                        "score=${res.quality.score} art=${res.pixelArt} framed=${res.framed} ${ms}ms " +
                         "de=${"%.2f".format(res.quality.meanDeltaE)} p90=${"%.2f".format(res.quality.p90DeltaE)} " +
                         "break=${"%.3f".format(res.quality.breakRate)} flat=${"%.3f".format(res.quality.flattenRate)} " +
                         "qcolors=${res.quality.colorCount}"
                 )
             }
         }
+    }
+
+    /** 按目标格子宽高比做中位裁切，避免自定义正方形网格把源图拉变形。 */
+    private fun cropToAspect(src: IntArray, w: Int, h: Int, gw: Int, gh: Int): Triple<IntArray, Int, Int> {
+        val targetAspect = gw.toDouble() / gh
+        var cw = w
+        var ch = (w / targetAspect).toInt()
+        if (ch > h) { ch = h; cw = (h * targetAspect).toInt() }
+        cw = cw.coerceIn(1, w); ch = ch.coerceIn(1, h)
+        val ox = (w - cw) / 2; val oy = (h - ch) / 2
+        val out = IntArray(cw * ch)
+        for (y in 0 until ch) System.arraycopy(src, (y + oy) * w + ox, out, y * cw, cw)
+        return Triple(out, cw, ch)
     }
 
     private fun writePng(file: File, res: PatternResult, cell: Int) {

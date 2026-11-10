@@ -58,13 +58,13 @@ fun CreateScreen(
                 title = "图片生成",
                 subtitle = "照片转拼豆图纸",
                 onClick = onPickPhoto,
-            ) { ShIconTile(Icons.Rounded.AddPhotoAlternate, ClayColors.TintGreen, ClayColors.Primary) }
+            ) { ShIconTile(Icons.Rounded.AddPhotoAlternate, ClayColors.TintSky, ClayColors.PrimaryInk) }
             EntryCard(
                 modifier = Modifier.weight(1f),
                 title = "像素画生成",
                 subtitle = "按画像素 1:1 还原",
                 onClick = onPickPixel,
-            ) { ShIconTile(Icons.Rounded.GridOn, ClayColors.TintSky, ClayColors.BrandBlue) }
+            ) { ShIconTile(Icons.Rounded.GridOn, ClayColors.TintMint, ClayColors.BrandTeal) }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {

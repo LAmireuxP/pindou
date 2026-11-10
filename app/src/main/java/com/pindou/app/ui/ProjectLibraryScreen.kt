@@ -100,7 +100,7 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
                 modifier = Modifier.padding(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ShIconTile(Icons.Rounded.AddPhotoAlternate, ClayColors.TintGreen, ClayColors.Primary)
+                ShIconTile(Icons.Rounded.AddPhotoAlternate, ClayColors.TintSky, ClayColors.Primary)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -140,7 +140,7 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
             )
             SecondaryEntry(
                 icon = Icons.Rounded.TextFields,
-                iconBg = ClayColors.TintSky,
+                iconBg = ClayColors.TintMint,
                 iconTint = ClayColors.BrandPink,
                 title = "文字拼豆",
                 subtitle = "打字生成图纸",

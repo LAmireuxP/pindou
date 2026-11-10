@@ -1,9 +1,11 @@
 package com.pindou.app.ui.editor
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,7 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,9 +32,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -52,7 +57,9 @@ import com.pindou.app.ui.AppViewModel
 import com.pindou.app.ui.CellCodeDrawer
 import com.pindou.app.ui.shadcn.ShChip
 import com.pindou.app.ui.shadcn.ShSearchField
+import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
+import kotlinx.coroutines.delay
 
 /**
  * 替换相似颜色 / 全图合并相近色。
@@ -248,7 +255,7 @@ fun ColorReplaceSheet(
                 Text(
                     if (threshold <= 0.05f) "仅同色号" else "ΔE ≤ %.1f".format(threshold),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = ClayColors.PrimaryInk,
                 )
             }
             Slider(
@@ -300,7 +307,7 @@ fun ColorReplaceSheet(
                         "${preview.moves.size} 色 · ${preview.movedCells} 格 → $targetCode",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (preview.changed) {
-                            MaterialTheme.colorScheme.primary
+                            ClayColors.PrimaryInk
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
@@ -474,69 +481,106 @@ private fun Swatch(argb: Int, size: Dp) {
     )
 }
 
-/** 替换 / 合并完成后的明细：每条「旧色 → 新色 · 格数」，可一键撤销 */
+/**
+ * 替换 / 合并完成后的结果条。
+ *
+ * 之前是 AlertDialog：一改色就整屏变暗、点画布被吞掉，用户要按两下才能继续画。
+ * 现在是一条贴在画布顶部的浮条，只占自己那一条的高度，点画布照常上色；
+ * 6 秒后自己消失，撤销按钮留在条上，不打断手上的动作。
+ */
 @Composable
-fun ColorReplaceReportDialog(
+fun ColorOpReportBar(
     moves: List<ColorReplaceOps.Move>,
     palette: BeadPalette,
     onUndo: () -> Unit,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val totalCells = moves.sumOf { it.cells }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("已完成 · ${moves.size} 组") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val shown = moves.take(3)
+    LaunchedEffect(moves) {
+        delay(6000)
+        onDismiss()
+    }
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shadowElevation = 6.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = null,
+                tint = ClayColors.PrimaryInk,
+                modifier = Modifier.size(18.dp),
+            )
+            Column(Modifier.weight(1f)) {
                 Text(
-                    "共改动 $totalCells 格",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "已改 ${totalCells} 格 · ${moves.size} 组",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
-                moves.take(12).forEach { move ->
-                    val from = palette.colors.getOrNull(move.from)
-                    val to = palette.colors.getOrNull(move.to)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Swatch(argb = from?.argb ?: 0, size = 14.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    shown.forEach { move ->
+                        val from = palette.colors.getOrNull(move.from)
+                        val to = palette.colors.getOrNull(move.to)
+                        Swatch(argb = from?.argb ?: 0, size = 9.dp)
                         Text(
-                            from?.code ?: "?",
-                            style = MaterialTheme.typography.bodySmall,
+                            "→",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Text("→", style = MaterialTheme.typography.bodySmall)
-                        Swatch(argb = to?.argb ?: 0, size = 14.dp)
+                        Swatch(argb = to?.argb ?: 0, size = 9.dp)
                         Text(
                             to?.code ?: "?",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                    if (moves.size > shown.size) {
                         Text(
-                            "${move.cells} 格",
+                            "+${moves.size - shown.size}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-                if (moves.size > 12) {
-                    Text(
-                        "还有 ${moves.size - 12} 组…",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完成") }
-        },
-        dismissButton = {
-            TextButton(onClick = {
-                onUndo()
-                onDismiss()
-            }) { Text("撤销") }
-        },
-    )
+            TextButton(
+                onClick = onUndo,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Text(
+                    "撤销",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = ClayColors.PrimaryInk,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onDismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "关闭",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+        }
+    }
 }
 

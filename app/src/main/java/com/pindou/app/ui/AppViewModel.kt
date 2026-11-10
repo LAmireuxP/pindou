@@ -227,6 +227,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var maxColors by mutableIntStateOf(24)
     var dithering by mutableStateOf(false)
     var removeBackground by mutableStateOf(false)
+    /** 自动贴着主体取景：空白边占的格子等于白扔的豆子，默认开 */
+    var autoFrame by mutableStateOf(true)
     var backgroundTolerance by mutableFloatStateOf(12f)
     // 过滤等级：对齐颂拼豆「导入前处理」四档，默认中过滤
     var filterLevel by mutableStateOf(com.pindou.app.core.pattern.FilterLevel.MEDIUM)
@@ -791,6 +793,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         backgroundTolerance = backgroundTolerance.toDouble(),
         filterLevel = filterLevel,
         exactArt = pixelArtMode,
+        autoFrame = autoFrame,
     )
 
     /**

@@ -118,7 +118,15 @@ object ImagePreprocessor {
         // 白底稀释成灰粉。
         // exactArt：用户在「像素画生成」入口显式选了像素支路，检测放宽、
         // 取色改成最近画像素（不做块内平均），保证色号就是原画里那几个。
-        val art = PixelArtDetector.detect(pixels, srcW, srcH, relaxed = exactArt)
+        val detected = PixelArtDetector.detect(pixels, srcW, srcH, relaxed = exactArt)
+        // 目标格比画格粗 25% 以上时改走通用支路：真像素画缩小到 60 格后，
+        // 1px 描边在任何取样法下都保不住（实测 110 格画 -> 60 格豆只剩断点），
+        // 而通用支路的线检测 + 边界保护在同尺寸下是连续的
+        // （rabbit3 60x60：结构分 97 -> 100，ΔE 0.85 -> 0.54）。
+        // 1:1 与放大不触发，像素画的"逐画像素"语义不受影响。
+        val tooCoarse = detected != null &&
+            (gridW < detected.artW * 0.8 || gridH < detected.artH * 0.8)
+        val art = if (detected != null && !tooCoarse) detected else null
         if (art != null) {
             return sampleArt(pixels, srcW, srcH, gridW, gridH, art, exactArt)
         }
@@ -126,9 +134,9 @@ object ImagePreprocessor {
         // 仍然走"每格取块内出现最多的原始色"，不生成过渡色。这是与照片
         // 支路（面积平均）最本质的区别——照片支路必须平均，否则纹理变噪点；
         // 像素画支路必须不平均，否则色块边界糊成渐变。
-        if (exactArt) {
-            return sampleNearest(pixels, srcW, srcH, gridW, gridH)
-        }
+        // 像素画入口但检测没命中：说明这张图不是像素画（平滑插画、照片）。
+        // 强行走"逐格众数"会把平滑线条打成一串孤点（60x60 实测断成虚线），
+        // 这里直接落到通用支路——线检测 + 边界保护本来就为这种图设计的。
         val iw = gridW * SCALE
         val ih = gridH * SCALE
         val n = iw * ih
@@ -1047,40 +1055,31 @@ object ImagePreprocessor {
         return (0xFF shl 24) or (cr shl 16) or (cg shl 8) or cb
     }
 
-    /**
-     * 硬取色采样：每格取块内出现最多的原始颜色，不做面积平均。
-     *
-     * 只服务显式「像素画生成」且画像素网格没检测出来的情况。复杂度
-     * O(格数 × 每格样本数)，样本上限 16×16，200×200 网格约 1000 万次
-     * 比较，中端机 300ms 量级。
-     */
-    private fun sampleNearest(
-        pixels: IntArray,
-        srcW: Int,
-        srcH: Int,
-        gridW: Int,
-        gridH: Int,
-    ): GridSample {
-        val argb = IntArray(gridW * gridH)
-        for (gy in 0 until gridH) {
-            val y0 = gy * srcH.toDouble() / gridH
-            val y1 = (gy + 1) * srcH.toDouble() / gridH
-            for (gx in 0 until gridW) {
-                val x0 = gx * srcW.toDouble() / gridW
-                val x1 = (gx + 1) * srcW.toDouble() / gridW
-                argb[gy * gridW + gx] = regionModeColor(pixels, srcW, srcH, x0, y0, x1, y1)
-            }
-        }
-        val lab = FloatArray(argb.size * 3)
-        for (i in argb.indices) {
-            val l = ColorConversions.argbToLab(argb[i])
-            lab[i * 3] = l[0]
-            lab[i * 3 + 1] = l[1]
-            lab[i * 3 + 2] = l[2]
-        }
-        // 把硬取色结果当作 1:1 的"画像素网格"交给像素支路量化：跳过照片
-        // 支路的聚类/细节回填/众数滤波，色号不会被重新揉在一起
-        return GridSample(argb, lab, ArtGrid(argb, gridW, gridH), exact = true)
+    private fun bucketColor(key: Int): Int {
+        val r = (((key shr 16) and 0xFF) or 0x04).coerceAtMost(255)
+        val g = (((key shr 8) and 0xFF) or 0x04).coerceAtMost(255)
+        val b = ((key and 0xFF) or 0x04).coerceAtMost(255)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    private fun luminance(key: Int): Int {
+        val r = (key shr 16) and 0xFF
+        val g = (key shr 8) and 0xFF
+        val b = key and 0xFF
+        return (r * 299 + g * 587 + b * 114) / 1000
+    }
+
+    private fun deltaE(a: Int, b: Int): Double {
+        val la = ColorConversions.argbToLab(
+            (0xFF shl 24) or (a and 0x00FFFFFF),
+        )
+        val lb = ColorConversions.argbToLab(
+            (0xFF shl 24) or (b and 0x00FFFFFF),
+        )
+        val dl = la[0] - lb[0]
+        val da = la[1] - lb[1]
+        val db = la[2] - lb[2]
+        return kotlin.math.sqrt((dl * dl + da * da + db * db).toDouble())
     }
 
     private fun sampleArt(
@@ -1103,7 +1102,10 @@ object ImagePreprocessor {
         // 用户把 56 格的画放大到 104 格时，非细分采样没有任何新信息，只会
         // 把每个画像素复制成 2×2 同色块（实测 flat 0.65），这时仍然细分，
         // 软像素画块内的渐变还能还原出层次。
-        val useExact = exact && gridW <= art.artW + 2 && gridH <= art.artH + 2
+        val useExact = exact && kotlin.math.abs(gridW - art.artW) <= 2 &&
+            kotlin.math.abs(gridH - art.artH) <= 2
+        // 目标格明显比画格粗的档（110 格画 -> 60 格豆）不会走到这里：
+        // sample() 已经按 1.25 倍判据改跳通用支路。
         val sub = if (useExact) 1 else if (gridW > art.artW + 2 || gridH > art.artH + 2) 2 else 1
         val aw = art.artW * sub
         val ah = art.artH * sub

@@ -117,7 +117,8 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
             Column(Modifier.weight(1f)) {
                 Text("图纸预览", style = MaterialTheme.typography.displayMedium)
                 Text(
-                    "${result.width}×${result.height} · ${result.palette.brandLabel}",
+                    "${result.width}×${result.height} · ${result.palette.brandLabel}" +
+                        if (result.framed) " · 已自动取景" else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -352,6 +352,22 @@ fun EditorScreen(vm: AppViewModel) {
                     transform.reset()
                 }
             }
+
+            // 改色结果条：贴在画布顶上，不挡画布手势，6 秒自动收
+            if (colorOpReport.isNotEmpty()) {
+                ColorOpReportBar(
+                    moves = colorOpReport,
+                    palette = palette,
+                    onUndo = {
+                        vm.undoEditor()
+                        colorOpReport = emptyList()
+                    },
+                    onDismiss = { colorOpReport = emptyList() },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(8.dp),
+                )
+            }
         }
 
         // 页码行
@@ -880,7 +896,7 @@ fun EditorScreen(vm: AppViewModel) {
                                 },
                                 colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
                                     contentColor = if (selected) {
-                                        MaterialTheme.colorScheme.primary
+                                        ClayColors.PrimaryInk
                                     } else {
                                         MaterialTheme.colorScheme.onSurfaceVariant
                                     },
@@ -922,15 +938,6 @@ fun EditorScreen(vm: AppViewModel) {
             onReport = { colorOpReport = it },
         )
     }
-    if (colorOpReport.isNotEmpty()) {
-        ColorReplaceReportDialog(
-            moves = colorOpReport,
-            palette = palette,
-            onUndo = { vm.undoEditor() },
-            onDismiss = { colorOpReport = emptyList() },
-        )
-    }
-
     // 长按单格：底部弹层，动作区在手指可达范围内
     if (cellSheetOpen && longPressCell != null) {
         val cell = longPressCell!!
@@ -1252,7 +1259,7 @@ private fun EditorToolButton(
             icon,
             contentDescription = label,
             tint = if (selected) {
-                MaterialTheme.colorScheme.primary
+                ClayColors.PrimaryInk
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
@@ -1262,7 +1269,7 @@ private fun EditorToolButton(
             label,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
             color = if (selected) {
-                MaterialTheme.colorScheme.primary
+                ClayColors.PrimaryInk
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
@@ -1295,7 +1302,7 @@ private fun CompactChip(text: String, selected: Boolean, onClick: () -> Unit) {
             text,
             style = MaterialTheme.typography.labelSmall,
             color = if (selected) {
-                MaterialTheme.colorScheme.primary
+                ClayColors.PrimaryInk
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
@@ -1330,14 +1337,14 @@ private fun CanvasPill(
         Icon(
             icon,
             contentDescription = null,
-            tint = if (selected) MaterialTheme.colorScheme.primary
+            tint = if (selected) ClayColors.PrimaryInk
             else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(14.dp),
         )
         Text(
             text,
             style = MaterialTheme.typography.labelSmall,
-            color = if (selected) MaterialTheme.colorScheme.primary
+            color = if (selected) ClayColors.PrimaryInk
             else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp),
         )
@@ -1437,7 +1444,7 @@ private fun CellActionTile(
             icon,
             contentDescription = null,
             tint = if (enabled) {
-                MaterialTheme.colorScheme.primary
+                ClayColors.PrimaryInk
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
             },

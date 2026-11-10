@@ -21,6 +21,8 @@ data class GeneratorOptions(
     val regionMinArea: Int? = null,           // null = 按过滤等级/格数自适应
     /** 显式「像素画生成」：放宽画像素检测并按最近画像素取色，不生成过渡色 */
     val exactArt: Boolean = false,
+    /** 自动贴着主体取景：四周空白多时先裁掉再采样（照片/插画默认开） */
+    val autoFrame: Boolean = true,
 )
 
 /** 生成结果：cells 为色卡索引（-1 = 空格），与 palette 配套使用 */
@@ -36,6 +38,8 @@ data class PatternResult(
     val filterLevel: FilterLevel = FilterLevel.MEDIUM,
     /** 源图被识别成像素画：图纸是逐画像素还原的，质量口径与照片不同 */
     val pixelArt: Boolean = false,
+    /** 生成前裁过空白边：预览页据此提示"已自动取景" */
+    val framed: Boolean = false,
 ) {
     /** 各色号用量（索引 → 数量），按数量降序 */
     fun usage(): List<Pair<Int, Int>> {
@@ -81,11 +85,23 @@ object PatternGenerator {
         } else pixels
         onStage(GenerationStage.EXPOSURE, 1f)
 
+        // ⓪b 主体取景：空白边占的格子就是白扔的豆子。
+        //     先按主体包围盒裁、再按网格比例补边，同样 60×60 能画两倍细节。
+        //     像素画不裁：裁完画像素网格会错位，逐像素还原的前提就没了。
+        val frame = if (options.autoFrame && !options.exactArt) {
+            AutoFrame.apply(exposurePixels, srcW, srcH, options.gridW, options.gridH)
+        } else {
+            null
+        }
+        val srcPixels = frame?.pixels ?: exposurePixels
+        val srcWidth = frame?.w ?: srcW
+        val srcHeight = frame?.h ?: srcH
+
         // ① 采样：面积平均 + 分级平滑，直接得到目标网格的颜色。
         //    过滤等级越高，2× 中间图上的盒式平滑越强，纹理高频先被吃掉。
         onStage(GenerationStage.DOWNSAMPLE, 0f)
         val sample = ImagePreprocessor.sample(
-            exposurePixels, srcW, srcH, options.gridW, options.gridH, options.filterLevel,
+            srcPixels, srcWidth, srcHeight, options.gridW, options.gridH, options.filterLevel,
             options.exactArt,
         )
         onStage(GenerationStage.DOWNSAMPLE, 1f)
@@ -156,9 +172,9 @@ object PatternGenerator {
             // 黑色描边会被泛洪从断口穿透，主体内部的白随之被误删。
             val removed = BackgroundRemover.applyToCellsFromPixels(
                 cells = mapped,
-                pixels = exposurePixels,
-                srcW = srcW,
-                srcH = srcH,
+                pixels = srcPixels,
+                srcW = srcWidth,
+                srcH = srcHeight,
                 w = options.gridW,
                 h = options.gridH,
                 tolerance = options.backgroundTolerance,
@@ -228,7 +244,7 @@ object PatternGenerator {
             sample
         } else {
             ImagePreprocessor.sample(
-                exposurePixels, srcW, srcH, options.gridW, options.gridH, FilterLevel.NONE,
+                srcPixels, srcWidth, srcHeight, options.gridW, options.gridH, FilterLevel.NONE,
                 options.exactArt,
             )
         }
@@ -258,6 +274,7 @@ object PatternGenerator {
             quality = quality,
             filterLevel = options.filterLevel,
             pixelArt = art != null,
+            framed = frame?.trimmed == true,
         )
         onStage(GenerationStage.DONE, 1f)
         return result

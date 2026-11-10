@@ -23,7 +23,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.LinearProgressIndicator
@@ -53,6 +52,7 @@ import com.pindou.app.ui.shadcn.ShCard
 import com.pindou.app.ui.shadcn.ShChip
 import com.pindou.app.ui.shadcn.ShPageHeader
 import com.pindou.app.ui.shadcn.TextButton
+import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 
 // 与颂拼豆「原图尺寸」对齐：只选宽度，高度按图片比例推导
@@ -469,6 +469,12 @@ fun ParamsScreen(vm: AppViewModel) {
                     checked = vm.removeBackground,
                     onCheckedChange = { vm.removeBackground = it },
                 )
+                SwitchRow(
+                    title = "自动贴主体取景",
+                    subtitle = "四周空白先裁掉再排网格：同样的 60×60，主体能多占一倍格子",
+                    checked = vm.autoFrame,
+                    onCheckedChange = { vm.autoFrame = it },
+                )
                 if (vm.removeBackground) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -532,7 +538,7 @@ fun ParamsScreen(vm: AppViewModel) {
                     Text(
                         info,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = ClayColors.PrimaryInk,
                     )
                     // 逐档得分：同一张图在四个过滤档下的还原度，
                     // 选中档高亮。用户能看见"选错一档损失几分"，不是黑箱。
@@ -614,16 +620,8 @@ fun ParamsScreen(vm: AppViewModel) {
                     .weight(if (isTextMode) 1f else 1.2f)
                     .height(48.dp),
             ) {
-                if (vm.genState is GenState.Running) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(18.dp).widthIn(min = 18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
                 Text(
                     if (vm.autoTuneInfo != null && vm.genState is GenState.Done) "查看图纸" else "生成图纸",
-                    modifier = Modifier.padding(start = 8.dp),
                 )
             }
         }

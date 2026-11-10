@@ -26,9 +26,9 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
-/** 空格底色（棋盘浅灰） */
-private val EmptyCellA = Color(0xFFEFEFEA)
-private val EmptyCellB = Color(0xFFE2E2DC)
+/** 空格底色（棋盘浅灰蓝，与 Hairline 同色温） */
+private val EmptyCellA = Color(0xFFEFF3F9)
+private val EmptyCellB = Color(0xFFE4EAF2)
 
 /** 预览画布的缩放/平移状态（换图纸时重建） */
 private class PreviewTransform {

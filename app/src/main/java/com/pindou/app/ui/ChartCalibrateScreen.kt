@@ -125,7 +125,7 @@ fun ChartCalibrateScreen(vm: AppViewModel) {
                 .height(360.dp)
                 .padding(horizontal = Spacing.md)
                 .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF17171A))
+                .background(Color(0xFF0E1419))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
                 .onSizeChanged { canvasSize = it }
                 // key 不能带 grid：拖动会改 grid，key 一变手势协程就被重启，

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 与 Compose 主题 Canvas (#FAFAFA) 保持一致，冷启动不闪色 -->
-    <color name="window_background">#FAFAFA</color>
-    <!-- 启动图标底色：纯白，与课堂笔记（luyin）图标同一套资源 -->
+    <!-- 与 Compose 主题 Canvas (#F7FAFD) 保持一致，冷启动不闪色 -->
+    <color name="window_background">#F7FAFD</color>
+    <!-- 启动图标底色：纯白，与课堂笔记（luyin）图标同一套资源；前景蓝 #5FBAFF -->
     <color name="ic_launcher_background">#ffffff</color>
 </resources>

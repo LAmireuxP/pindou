@@ -1,11 +1,13 @@
 package com.pindou.app.ui
 
+import com.pindou.app.ui.theme.ClayColors
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Home
@@ -20,8 +22,10 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,7 +61,11 @@ fun PindouApp(vm: AppViewModel) {
             // toast 显示后清空，避免重复弹出
             val msg = vm.toast
             if (msg != null) {
-                snackbarHostState.showSnackbar(msg)
+                snackbarHostState.showSnackbar(
+                    message = msg,
+                    duration = SnackbarDuration.Short,
+                    withDismissAction = false,
+                )
                 vm.toast = null
             }
             delay(300)
@@ -107,7 +115,24 @@ fun PindouApp(vm: AppViewModel) {
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        // 结果提示做成小药丸：默认的整条 Snackbar 又宽又高，会盖住底部工具条
+        snackbarHost = {
+            SnackbarHost(snackbarHostState) { data ->
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = ClayColors.Ink,
+                    contentColor = ClayColors.OnDark,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        data.visuals.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
+            }
+        },
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             // 仅首页显示底部导航，流程页保持画布聚焦
@@ -134,8 +159,8 @@ fun PindouApp(vm: AppViewModel) {
                                 },
                                 label = { Text(tab.label, style = MaterialTheme.typography.labelSmall) },
                                 colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    selectedIconColor = ClayColors.PrimaryInk,
+                                    selectedTextColor = ClayColors.PrimaryInk,
                                     indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
                                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,

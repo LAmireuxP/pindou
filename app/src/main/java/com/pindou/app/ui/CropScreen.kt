@@ -132,8 +132,12 @@ fun CropScreen(vm: AppViewModel) {
     /** 网格尺寸变了就把选区吸附到新比例的最大居中框：否则「定了网格」和框是两张皮 */
     fun snapToGridRatio() {
         if (imgW <= 0 || imgH <= 0) return
-        val ratio = if (vm.gridH > 0) vm.gridW.toFloat() / vm.gridH else 1f
-        aspect = CropAspect.GRID
+        // 选区比例跟当前模式走：SQUARE 下改网格不能把框拉成 60:110，FREE 下压根不该动框。
+        val ratio = when (aspect) {
+            CropAspect.SQUARE -> 1f
+            CropAspect.GRID -> if (vm.gridH > 0) vm.gridW.toFloat() / vm.gridH else 1f
+            CropAspect.FREE -> return
+        }
         vm.updateCropRect(ImageTransforms.centeredAspect(imgW, imgH, ratio))
     }
 
@@ -298,6 +302,16 @@ fun CropScreen(vm: AppViewModel) {
                                 )
                             },
                         )
+                        // 正方形 1:1 只管选区不管网格时，网格还是 60x62 这种非方阵，
+                        // 生成出来照样每格不等比。切到 1:1 就把格高对齐格宽。
+                        if (mode == CropAspect.SQUARE) {
+                            // 1:1 下网格必须也是 1:1：先关掉锁比例，再把格高写死等于格宽，
+                            // 否则 lockGridAspect 会按源图宽高比把高改回 62 这种值。
+                            if (vm.lockGridAspect) vm.toggleGridAspectLock()
+                            vm.setGridSize(vm.gridW, vm.gridW)
+                        } else if (mode == CropAspect.GRID && !vm.lockGridAspect) {
+                            vm.toggleGridAspectLock()
+                        }
                     },
                 )
             }
@@ -339,11 +353,14 @@ fun CropScreen(vm: AppViewModel) {
                     Text("网格", style = MaterialTheme.typography.labelLarge)
                     GridStepper(value = vm.gridW) {
                         vm.setCropGridWidth(it)
+                        // 1:1 模式下宽度改了就把高度拉齐，不然 60x110 又变回非方阵
+                        if (aspect == CropAspect.SQUARE) vm.setCropGridHeight(vm.gridW)
                         snapToGridRatio()
                     }
                     Text("×", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     GridStepper(value = vm.gridH) {
                         vm.setCropGridHeight(it)
+                        if (aspect == CropAspect.SQUARE) vm.setCropGridWidth(vm.gridH)
                         snapToGridRatio()
                     }
                     Spacer(Modifier.weight(1f))
@@ -373,6 +390,8 @@ fun CropScreen(vm: AppViewModel) {
                             selected = vm.gridW == w,
                             onClick = {
                                 vm.setCropGridWidth(w)
+                                // SQUARE 下点档位也要方阵：24 就是 24×24，不是 24×110
+                                if (aspect == CropAspect.SQUARE) vm.setCropGridHeight(vm.gridW)
                                 snapToGridRatio()
                             },
                         )
