@@ -30,7 +30,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,20 +40,20 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private data class Tab(
+    val target: HomeTab,
     val label: String,
     val outlined: ImageVector,
     val filled: ImageVector,
 )
 
 private val Tabs = listOf(
-    Tab("项目库", Icons.Outlined.Home, Icons.Filled.Home),
-    Tab("创建", Icons.Outlined.AddCircleOutline, Icons.Filled.AddCircle),
-    Tab("设置", Icons.Outlined.Settings, Icons.Filled.Settings),
+    Tab(HomeTab.LIBRARY, "项目库", Icons.Outlined.Home, Icons.Filled.Home),
+    Tab(HomeTab.CREATE, "创建", Icons.Outlined.AddCircleOutline, Icons.Filled.AddCircle),
+    Tab(HomeTab.SETTINGS, "设置", Icons.Outlined.Settings, Icons.Filled.Settings),
 )
 
 @Composable
 fun PindouApp(vm: AppViewModel) {
-    var selectedTab by remember { mutableIntStateOf(0) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -88,7 +87,13 @@ fun PindouApp(vm: AppViewModel) {
 
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
-    ) { uri -> uri?.let { vm.onImagePicked(it, pendingPixelMode) } }
+    ) { uri ->
+        uri?.let {
+            // 只在真的选到文件后重置。取消选择器不能把用户当前打开的项目清空。
+            vm.startNewProject()
+            vm.onImagePicked(it, pendingPixelMode)
+        }
+    }
 
     // .bpat 工程文件导入：同样走 SAF，任意 mime（导出方自定义扩展名，不做类型白名单）
     val bpatPicker = rememberLauncherForActivityResult(
@@ -120,6 +125,11 @@ fun PindouApp(vm: AppViewModel) {
 
     BackHandler(enabled = vm.screen != Screen.HOME) {
         vm.handleBack()
+    }
+
+    // 首页的创建/设置页按返回先回项目库，避免一按返回直接退出应用。
+    BackHandler(enabled = vm.screen == Screen.HOME && vm.homeTab != HomeTab.LIBRARY) {
+        vm.selectHomeTab(HomeTab.LIBRARY)
     }
 
     Scaffold(
@@ -155,13 +165,13 @@ fun PindouApp(vm: AppViewModel) {
                         containerColor = MaterialTheme.colorScheme.surface,
                         tonalElevation = 0.dp,
                     ) {
-                        Tabs.forEachIndexed { index, tab ->
+                        Tabs.forEach { tab ->
                             NavigationBarItem(
-                                selected = selectedTab == index,
-                                onClick = { selectedTab = index },
+                                selected = vm.homeTab == tab.target,
+                                onClick = { vm.selectHomeTab(tab.target) },
                                 icon = {
                                     Icon(
-                                        imageVector = if (selectedTab == index) tab.filled else tab.outlined,
+                                        imageVector = if (vm.homeTab == tab.target) tab.filled else tab.outlined,
                                         contentDescription = tab.label,
                                     )
                                 },
@@ -184,7 +194,6 @@ fun PindouApp(vm: AppViewModel) {
             when (vm.screen) {
                 Screen.HOME -> HomeScreen(
                     vm,
-                    selectedTab,
                     onPickImage = ::pickImage,
                     onPickPixel = ::pickPixelImage,
                     onPickBpat = ::pickBpat,
@@ -205,25 +214,23 @@ fun PindouApp(vm: AppViewModel) {
 @Composable
 private fun HomeScreen(
     vm: AppViewModel,
-    selectedTab: Int,
     onPickImage: () -> Unit,
     onPickPixel: () -> Unit,
     onPickBpat: () -> Unit,
     onPickChart: () -> Unit,
 ) {
-    when (selectedTab) {
-        0 -> ProjectLibraryTab(vm, onPickImage, onPickBpat)
-        1 -> CreateScreen(
+    when (vm.homeTab) {
+        HomeTab.LIBRARY -> ProjectLibraryScreen(
+            vm,
+            onGoCreate = { vm.selectHomeTab(HomeTab.CREATE) },
+            onPickBpat = onPickBpat,
+        )
+        HomeTab.CREATE -> CreateScreen(
             vm,
             onPickPhoto = onPickImage,
             onPickPixel = onPickPixel,
             onPickChart = onPickChart,
         )
-        else -> SettingsScreen(vm)
+        HomeTab.SETTINGS -> SettingsScreen(vm)
     }
-}
-
-@Composable
-private fun ProjectLibraryTab(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: () -> Unit) {
-    ProjectLibraryScreen(vm, onPickImage, onPickBpat)
 }

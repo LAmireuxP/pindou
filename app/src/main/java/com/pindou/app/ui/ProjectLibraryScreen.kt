@@ -11,6 +11,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -23,10 +24,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AddPhotoAlternate
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.GridOn
-import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material.icons.rounded.FileOpen
+import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,18 +42,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pindou.app.core.data.ProjectEntity
+import com.pindou.app.ui.shadcn.Button
 import com.pindou.app.ui.shadcn.ShCard
 import com.pindou.app.ui.shadcn.ShChip
-import com.pindou.app.ui.shadcn.ShIconTile
-import com.pindou.app.ui.shadcn.ShPageHeader
 import com.pindou.app.ui.shadcn.ShSearchField
-import com.pindou.app.ui.shadcn.ShSectionHeader
 import com.pindou.app.ui.shadcn.TextButton
+import com.pindou.app.ui.shadcn.OutlinedButton
 import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 import java.text.SimpleDateFormat
@@ -62,15 +60,20 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 项目库首页。布局遵循 shadcn/ui dashboard 结构：
- * 页面标题 → 主操作卡（白底描边）→ 次级入口双卡 → 内容区（搜索 + 筛选 + 网格）。
+ * 项目库首页：只做作品管理。
+ *
+ * 新建图纸统一收在「创建」页。这里保留的「导入 .bpat」是工程文件导入，
+ * 与照片/像素图/色号图的生成流程不是一件事，因此单独放在标题右侧。
  */
 @Composable
-fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: () -> Unit = {}) {
+fun ProjectLibraryScreen(
+    vm: AppViewModel,
+    onGoCreate: () -> Unit,
+    onPickBpat: () -> Unit = {},
+) {
     // 必须订阅（collectAsState）而非读 .value：StateFlow 配 WhileSubscribed 时读取不会启动上游查询
     val projects by vm.projects.collectAsState()
     var renameTarget by remember { mutableStateOf<ProjectEntity?>(null) }
-    var textDialogOpen by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<ProjectEntity?>(null) }
     var albumTarget by remember { mutableStateOf<ProjectEntity?>(null) }
     val visibleProjects = vm.filteredProjects(projects)
@@ -82,84 +85,38 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
             .padding(horizontal = Spacing.md),
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
-        ShPageHeader(
-            title = "豆儿",
-            subtitle = "导入照片，生成可直接照着拼的图纸",
-            modifier = Modifier.padding(top = Spacing.lg, bottom = Spacing.xxs),
-        )
-
-        // 主入口：白卡 + 品牌蓝图标块 + 右箭头，点击后打开系统图片选择器
-        ShCard(
-            onClick = {
-                vm.startNewProject()
-                onPickImage()
-            },
-            modifier = Modifier.fillMaxWidth(),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = Spacing.lg),
+            verticalAlignment = Alignment.Bottom,
         ) {
-            Row(
-                modifier = Modifier.padding(Spacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ShIconTile(Icons.Rounded.AddPhotoAlternate, ClayColors.TintSky, ClayColors.Primary)
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = Spacing.sm),
-                ) {
-                    Text("导入一张照片", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "自动简化配色并映射到实体色卡",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Icon(
-                    Icons.Rounded.ArrowForward,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "项目库",
+                    style = MaterialTheme.typography.displayLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    "${projects.size} 份图纸 · 保存在本机",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-        ) {
-            SecondaryEntry(
-                icon = Icons.Rounded.GridOn,
-                iconBg = ClayColors.TintMint,
-                iconTint = ClayColors.BrandTeal,
-                title = "空白画布",
-                subtitle = "${vm.gridW}×${vm.gridH} · 从零开始",
-                modifier = Modifier.weight(1f),
-                onClick = {
-                    vm.startNewProject()
-                    vm.startBlankCanvas()
-                },
-            )
-            SecondaryEntry(
-                icon = Icons.Rounded.TextFields,
-                iconBg = ClayColors.TintMint,
-                iconTint = ClayColors.BrandPink,
-                title = "文字拼豆",
-                subtitle = "打字生成图纸",
-                modifier = Modifier.weight(1f),
-                onClick = { textDialogOpen = true },
-            )
-        }
-
-        ShSectionHeader(
-            title = "我的作品",
-            modifier = Modifier.padding(top = Spacing.xxs),
-        ) {
-            Text(
-                "${visibleProjects.size} 个",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(Spacing.xs))
-            TextButton(onClick = onPickBpat) { Text("导入 .bpat") }
+            OutlinedButton(
+                onClick = onPickBpat,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.FileOpen,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("导入 .bpat", style = MaterialTheme.typography.labelMedium)
+            }
         }
 
         ShSearchField(
@@ -218,24 +175,71 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
 
         if (projects.isEmpty()) {
             ShCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(Spacing.lg)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                        BeadDot(ClayColors.BrandMint)
-                        BeadDot(ClayColors.BrandOchre)
-                        BeadDot(ClayColors.BrandBlue)
-                        BeadDot(ClayColors.BrandPink)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.lg, vertical = Spacing.xl),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(ClayColors.TintSky),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.GridView,
+                            contentDescription = null,
+                            tint = ClayColors.PrimaryInk,
+                            modifier = Modifier.size(26.dp),
+                        )
                     }
                     Text(
-                        "还没有作品",
+                        "还没有图纸",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(top = Spacing.md),
                     )
                     Text(
-                        "点上面的「导入一张照片」开始，生成的图纸会自动保存在这里",
+                        "去创建页导入照片、像素画或色号图，生成的图纸会自动保存在这里。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = Spacing.xxs),
+                    )
+                    Button(
+                        onClick = onGoCreate,
+                        modifier = Modifier.padding(top = Spacing.md),
+                    ) {
+                        Text("去创建")
+                    }
+                }
+            }
+        } else if (visibleProjects.isEmpty()) {
+            ShCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(Spacing.lg),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("没有匹配的图纸", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "换个关键词，或清除当前筛选",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Spacing.xxs),
                     )
+                    TextButton(
+                        onClick = {
+                            vm.libraryQuery = ""
+                            vm.libraryFavOnly = false
+                            vm.libraryAlbum = null
+                        },
+                        modifier = Modifier.padding(top = Spacing.xs),
+                    ) {
+                        Text("清除筛选")
+                    }
                 }
             }
         } else {
@@ -270,43 +274,6 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
                 }
             }
         }
-    }
-
-    if (textDialogOpen) {
-        var text by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { textDialogOpen = false },
-            title = { Text("文字拼豆") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        label = { Text("输入文字（支持多行）") },
-                        minLines = 2,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        "将按当前网格 ${vm.gridW}×${vm.gridH} 与色卡 ${vm.selectedPalette?.brandLabel ?: ""} 生成",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = Spacing.xs),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        vm.startNewProject()
-                        vm.generateFromText(text)
-                        textDialogOpen = false
-                    },
-                    enabled = text.isNotBlank(),
-                ) { Text("生成") }
-            },
-            dismissButton = { TextButton(onClick = { textDialogOpen = false }) { Text("取消") } },
-        )
     }
 
     renameTarget?.let { target ->
@@ -372,36 +339,6 @@ fun ProjectLibraryScreen(vm: AppViewModel, onPickImage: () -> Unit, onPickBpat: 
             },
             dismissButton = { TextButton(onClick = { albumTarget = null }) { Text("取消") } },
         )
-    }
-}
-
-/** 次级入口卡：白底描边 + 淡色图标块，高度一致保证两卡对齐 */
-@Composable
-private fun SecondaryEntry(
-    icon: ImageVector,
-    iconBg: Color,
-    iconTint: Color,
-    title: String,
-    subtitle: String,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    ShCard(onClick = onClick, modifier = modifier) {
-        Column(Modifier.padding(Spacing.md)) {
-            ShIconTile(icon, iconBg, iconTint)
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(top = Spacing.sm),
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 

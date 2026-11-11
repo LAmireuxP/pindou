@@ -52,6 +52,14 @@ enum class Screen {
     HOME, CROP, PARAMS, PREVIEW, EDITOR, CONSTRUCTION, CHART_CALIBRATE, PIXEL_CALIBRATE,
 }
 
+/**
+ * 首页底部导航页签。
+ *
+ * 创建页是唯一的新建入口；项目库只负责浏览、搜索、整理已保存的图纸。
+ * 两边不再各放一套「导入照片 / 空白画布」，避免同一个流程出现两个入口。
+ */
+enum class HomeTab { LIBRARY, CREATE, SETTINGS }
+
 /** 编辑工具 */
 enum class EditorTool { NONE, PAINT, ERASE, PICKER, FILL, PAN }
 
@@ -87,6 +95,9 @@ class CropGridPreview(
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     var screen by mutableStateOf(Screen.HOME)
+        private set
+
+    var homeTab by mutableStateOf(HomeTab.LIBRARY)
         private set
 
     // 导入的图（像素供管线使用，缩略图供参数页显示）
@@ -244,6 +255,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var settings by mutableStateOf(SettingsStore.Snapshot())
         private set
 
+    /** 累计生成统计（从 1.2.3 起记录） */
+    var stats by mutableStateOf(SettingsStore.Stats())
+        private set
+
+    /**
+     * 当前这次新建的来源。
+     *
+     * 只在真正落库时消费，所以用户中途取消裁剪、返回首页都不会污染统计。
+     * 每次 startNewProject 重置为 PHOTO，各入口在重置之后再覆盖。
+     */
+    private var pendingCreationKind = SettingsStore.CreationKind.PHOTO
+
     var toast by mutableStateOf<String?>(null)
 
     /** 最近一次操作失败原因（常驻显示，便于排查与反馈） */
@@ -378,6 +401,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        viewModelScope.launch {
+            settingsStore.statsFlow.collect { stats = it }
+        }
     }
 
     fun palettesFor(beadSizeTag: String): List<BeadPalette> =
@@ -385,6 +411,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Photo Picker / GetContent 回调：解码并限制最大边 2048 */
     fun onImagePicked(uri: Uri, pixelMode: Boolean = false) {
+        pendingCreationKind = if (pixelMode) {
+            SettingsStore.CreationKind.PIXEL
+        } else {
+            SettingsStore.CreationKind.PHOTO
+        }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val resolver = getApplication<Application>().contentResolver
@@ -783,6 +814,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         launchTransform {
+            // 裁切会改变画像素网格的起点和列数，旧校准直接失效；
+            // 留着它会让下一次生成按错误块长切块，整张图错位。
+            if (pixelCalibrated) {
+                pixelCalibrated = false
+                pixelCalibration = null
+            }
             val t = ImageTransforms.crop(pixels, w, h, rect)
             imagePixels = t.pixels
             imageW = t.width
@@ -1103,6 +1140,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         backgroundTolerance = backgroundTolerance.toDouble(),
         filterLevel = filterLevel,
         exactArt = pixelArtMode,
+        // 只有用户在校准页确认过的网格才当硬约束；自动检测的偏移/块长
+        // 由采样器自己算，硬塞一个 ox=0 的网格反而会切歪。
+        pixelGrid = pixelArtGrid.takeIf { pixelArtMode && pixelCalibrated },
         autoFrame = autoFrame,
     )
 
@@ -1197,9 +1237,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         editorFromLibrary = false
     }
 
+    fun selectHomeTab(tab: HomeTab) {
+        homeTab = tab
+    }
+
     /** 预览返回上一步：从参数页来就回参数页，从项目库来就回项目库 */
     fun backFromPreview() {
         screen = previewReturn
+        // 图纸保存后从预览退回首页时落在项目库，用户能立刻看到刚生成的作品；
+        // 从参数页/校准页退回则保留在创建流程里，方便继续调参。
+        if (previewReturn == Screen.HOME) homeTab = HomeTab.LIBRARY
     }
 
     /** 系统返回键：按流程层级上退 */
@@ -1269,6 +1316,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             currentProjectId = repository.create(displayName(), result)
             projectName = displayName()
+            settingsStore.recordCreation(pendingCreationKind)
             if (imagePreview != null && textSource == null) {
                 saveRefImage(currentProjectId!!)
             }
@@ -1296,6 +1344,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** 空白画布：直接创建空网格进编辑器 */
     fun startBlankCanvas() {
         val palette = selectedPalette ?: return
+        pendingCreationKind = SettingsStore.CreationKind.BLANK
         pixelArtMode = false
         val w = gridW.coerceIn(5, 200)
         val h = gridH.coerceIn(5, 200)
@@ -1317,6 +1366,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun generateFromText(text: String) {
         val palette = selectedPalette ?: return
         if (text.isBlank()) return
+        pendingCreationKind = SettingsStore.CreationKind.TEXT
         textSource = text
         projectPages = emptyList()
         genState = GenState.Running(GenerationStage.DOWNSAMPLE, 0f)
@@ -1443,6 +1493,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startNewProject() {
+        pendingCreationKind = SettingsStore.CreationKind.PHOTO
         currentProjectId = null
         projectName = "未命名图纸"
         genState = GenState.Idle
@@ -1536,6 +1587,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     pages,
                     engine.locks,
                 )
+                settingsStore.recordCreation(pendingCreationKind)
             }
         }
         screen = Screen.PREVIEW
@@ -1841,6 +1893,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     pages.map { BooleanArray(it.size) },
                     data.album,
                 )
+                settingsStore.recordCreation(SettingsStore.CreationKind.BPAT)
                 withContext(Dispatchers.Main) { toast = "已导入「${data.title.ifBlank { "图纸" }}」" }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { lastError = "导入失败：${e.message ?: e.javaClass.simpleName}" }
@@ -1944,6 +1997,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     offsetY = (h - minOf(w, h)) / 2.0,
                 )
                 startNewProject()
+                pendingCreationKind = SettingsStore.CreationKind.CHART
                 chartBitmap = bmp
                 chartPixels = px
                 chartW = w

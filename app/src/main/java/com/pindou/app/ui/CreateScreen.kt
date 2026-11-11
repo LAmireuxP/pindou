@@ -1,35 +1,55 @@
 package com.pindou.app.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.GridOn
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pindou.app.ui.shadcn.ShCard
 import com.pindou.app.ui.shadcn.ShIconTile
 import com.pindou.app.ui.shadcn.ShPageHeader
+import com.pindou.app.ui.shadcn.TextButton
 import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 
 /**
- * 创建页：四个入口平铺。
+ * 创建页：全应用唯一的新建入口。
  *
- * 先选来源，再进入各自的流程。
+ * 照片、像素画、色号图、文字、空白画布都从这里进；项目库不再重复放
+ * 「导入照片 / 空白画布」，避免用户不知道到底该点哪边。
  */
 @Composable
 fun CreateScreen(
@@ -38,6 +58,8 @@ fun CreateScreen(
     onPickPixel: () -> Unit,
     onPickChart: () -> Unit,
 ) {
+    var textDialogOpen by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -46,49 +68,179 @@ fun CreateScreen(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
         ShPageHeader(
-            title = "创建",
-            subtitle = "选一种来源开始做图纸",
+            title = "创建图纸",
+            subtitle = "选一个来源，生成可以直接照着拼的图纸",
             modifier = Modifier.padding(top = Spacing.lg, bottom = Spacing.xs),
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            EntryCard(
-                modifier = Modifier.weight(1f),
-                title = "图片生成",
-                subtitle = "照片转拼豆图纸",
-                onClick = onPickPhoto,
-            ) { ShIconTile(Icons.Rounded.AddPhotoAlternate, ClayColors.TintSky, ClayColors.PrimaryInk) }
-            EntryCard(
-                modifier = Modifier.weight(1f),
-                title = "像素画生成",
-                subtitle = "按画像素 1:1 还原",
-                onClick = onPickPixel,
-            ) { ShIconTile(Icons.Rounded.GridOn, ClayColors.TintMint, ClayColors.BrandTeal) }
-        }
+        PhotoEntry(onClick = onPickPhoto)
 
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+        ) {
+            EntryCard(
+                modifier = Modifier.weight(1f),
+                title = "像素画导入",
+                subtitle = "自带网格，逐像素还原",
+                icon = Icons.Rounded.GridOn,
+                iconBg = ClayColors.TintMint,
+                iconTint = ClayColors.BrandTeal,
+                onClick = onPickPixel,
+            )
             EntryCard(
                 modifier = Modifier.weight(1f),
                 title = "色号图识别",
-                subtitle = "导入现成图纸，自动认格",
+                subtitle = "现成图纸，自动认格",
+                icon = Icons.Rounded.Palette,
+                iconBg = ClayColors.TintButter,
+                iconTint = ClayColors.BrandOchre,
                 onClick = onPickChart,
-            ) { ShIconTile(Icons.Rounded.Palette, ClayColors.TintButter, ClayColors.BrandOchre) }
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+        ) {
+            EntryCard(
+                modifier = Modifier.weight(1f),
+                title = "文字拼豆",
+                subtitle = "打字排版生成图纸",
+                icon = Icons.Rounded.TextFields,
+                iconBg = ClayColors.TintRose,
+                iconTint = ClayColors.BrandPink,
+                onClick = { textDialogOpen = true },
+            )
             EntryCard(
                 modifier = Modifier.weight(1f),
                 title = "空白画布",
-                subtitle = "从零手绘",
-                onClick = { vm.startBlankCanvas() },
-            ) { ShIconTile(Icons.Rounded.Add, ClayColors.TintRose, ClayColors.BrandCoral) }
+                subtitle = "${vm.gridW}×${vm.gridH} · 从零手绘",
+                icon = Icons.Rounded.Add,
+                iconBg = ClayColors.TintSky,
+                iconTint = ClayColors.PrimaryInk,
+                onClick = {
+                    vm.startNewProject()
+                    vm.startBlankCanvas()
+                },
+            )
         }
 
         Spacer(Modifier.height(Spacing.xs))
         Text(
-            "色号图识别会自动找网格线；找不到时可以手动调列数和格子大小对齐。",
+            "不知道怎么选：照片用「导入照片」，已经是像素画用「像素画导入」，" +
+                "带色号的现成图纸用「色号图识别」。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 2.dp),
         )
         Spacer(Modifier.height(Spacing.xxl))
+    }
+
+    if (textDialogOpen) {
+        var text by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { textDialogOpen = false },
+            title = { Text("文字拼豆") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        label = { Text("输入文字（支持多行）") },
+                        minLines = 2,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "按当前网格 ${vm.gridW}×${vm.gridH} 与色卡 " +
+                            "${vm.selectedPalette?.brandLabel ?: ""} 生成",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = Spacing.xs),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val content = text.trim()
+                        if (content.isNotBlank()) {
+                            vm.startNewProject()
+                            vm.generateFromText(content)
+                            textDialogOpen = false
+                        }
+                    },
+                    enabled = text.isNotBlank(),
+                ) { Text("生成") }
+            },
+            dismissButton = {
+                TextButton(onClick = { textDialogOpen = false }) { Text("取消") }
+            },
+        )
+    }
+}
+
+/** 主入口：照片生成。白卡 + 品牌淡蓝图标块 + 推荐标签，层级高于其他入口。 */
+@Composable
+private fun PhotoEntry(onClick: () -> Unit) {
+    ShCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Spacing.lg),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        "推荐",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ClayColors.PrimaryInk,
+                    )
+                }
+                Text(
+                    "导入照片",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = Spacing.sm),
+                )
+                Text(
+                    "自动去背景、简化配色，生成好拼的图纸",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .padding(start = Spacing.md)
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(ClayColors.TintSky),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.AddPhotoAlternate,
+                    contentDescription = null,
+                    tint = ClayColors.PrimaryInk,
+                    modifier = Modifier.size(30.dp),
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Rounded.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(start = Spacing.xs)
+                    .size(18.dp),
+            )
+        }
     }
 }
 
@@ -97,11 +249,13 @@ private fun EntryCard(
     modifier: Modifier,
     title: String,
     subtitle: String,
+    icon: ImageVector,
+    iconBg: Color,
+    iconTint: Color,
     onClick: () -> Unit,
-    icon: @Composable () -> Unit,
 ) {
     ShCard(
-        modifier = modifier.height(146.dp),
+        modifier = modifier.height(142.dp),
         onClick = onClick,
     ) {
         Column(
@@ -110,7 +264,7 @@ private fun EntryCard(
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            icon()
+            ShIconTile(icon, iconBg, iconTint)
             Column {
                 Text(
                     title,

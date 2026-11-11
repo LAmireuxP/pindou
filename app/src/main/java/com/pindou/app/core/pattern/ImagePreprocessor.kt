@@ -92,9 +92,6 @@ object ImagePreprocessor {
 
     private const val SCALE = 2
 
-    /** 单块众数统计的桶数上限：一块里出现 24 种以上颜色说明检测本身不可信 */
-    private const val MODE_BUCKETS = 24
-
     /** 子块与块均值的每通道容差：小于它算纯色块，四个子块统一用块色 */
     private const val FLAT_BLOCK_TOL = 10
 
@@ -106,6 +103,8 @@ object ImagePreprocessor {
         gridH: Int,
         level: FilterLevel,
         exactArt: Boolean = false,
+        /** 用户在校准页确认过的画像素网格（列 × 行）；非空时跳过自动检测 */
+        pixelGridHint: Pair<Int, Int>? = null,
     ): GridSample {
         require(gridW in 1..500 && gridH in 1..500) { "网格尺寸越界: ${gridW}x$gridH" }
         require(srcW > 0 && srcH > 0) { "源图尺寸非法: ${srcW}x$srcH" }
@@ -115,7 +114,27 @@ object ImagePreprocessor {
         // 命中后颜色只取源图里真实存在的那些，不会被白底稀释成灰粉。
         // exactArt：「像素画生成」入口显式选择像素支路时，检测放宽、
         // 取色改为最近画像素（不做块内平均），保留原画的离散色号。
-        val detected = PixelArtDetector.detect(pixels, srcW, srcH, relaxed = exactArt)
+        val detected = when {
+            exactArt && pixelGridHint != null -> {
+                val (cols, rows) = pixelGridHint
+                if (cols in 1..500 && rows in 1..500) {
+                    PixelArtDetector.Result(
+                        blockW = srcW.toDouble() / cols,
+                        blockH = srcH.toDouble() / rows,
+                        artW = cols,
+                        artH = rows,
+                        ox = 0.0,
+                        oy = 0.0,
+                    )
+                } else {
+                    PixelArtDetector.detectForced(pixels, srcW, srcH)
+                }
+            }
+            // 显式像素画入口用强制档：二次压缩、缩放模糊的像素画在严格档
+            // 自相关会掉到阈值以下，宽松档仍可能漏；强制档还有平坦段兜底。
+            exactArt -> PixelArtDetector.detectForced(pixels, srcW, srcH)
+            else -> PixelArtDetector.detect(pixels, srcW, srcH)
+        }
         // 目标格比画格粗 25% 以上时改走通用支路：像素画缩小后，1px 描边
         // 在任何取样法下都保不住，而通用支路的线检测 + 边界保护更连续。
         // 1:1 与放大不触发，像素画的"逐画像素"语义不受影响。
@@ -936,143 +955,6 @@ object ImagePreprocessor {
     /** 墨线优先：纸白占比下限（挡住"深色块旁边只有一点点白"的假边界） */
     private const val PAPER_MIN_SHARE = 0.25f
 
-    /**
-     * 一个画像素（或子块）的颜色：内缩 22% 区域里"主色簇"的均值。
-     *
-     * 不用全区域均值：块边界被缩放糊成 4~6px 过渡带，均值会把相邻两色
-     * 混成源图里不存在的灰粉。不用纯众数：软像素画的块内部本身有明暗，
-     * 众数只取到其中一档，整块颜色会偏亮或偏暗。先按粗桶找主簇，再在
-     * 主簇内取均值，两头都避开。
-     */
-    private fun regionMainColor(
-        pixels: IntArray,
-        srcW: Int,
-        srcH: Int,
-        x0: Double,
-        y0: Double,
-        x1: Double,
-        y1: Double,
-    ): Int {
-        val sx0 = (x0 + (x1 - x0) * 0.22).toInt().coerceIn(0, srcW - 1)
-        val sx1 = (x1 - (x1 - x0) * 0.22).toInt().coerceIn(sx0, srcW - 1)
-        val sy0 = (y0 + (y1 - y0) * 0.22).toInt().coerceIn(0, srcH - 1)
-        val sy1 = (y1 - (y1 - y0) * 0.22).toInt().coerceIn(sy0, srcH - 1)
-        // 桶 = 每通道丢低 3 位；同色块的 JPEG 抖动落在同一桶
-        val keys = IntArray(MODE_BUCKETS)
-        val bc = IntArray(MODE_BUCKETS)
-        var used = 0
-        for (yy in sy0..sy1) {
-            val row = yy * srcW
-            for (xx in sx0..sx1) {
-                val key = pixels[row + xx] and 0xF8F8F8
-                var slot = -1
-                for (s in 0 until used) if (keys[s] == key) { slot = s; break }
-                if (slot < 0) {
-                    if (used == MODE_BUCKETS) continue
-                    slot = used++
-                    keys[slot] = key
-                }
-                bc[slot]++
-            }
-        }
-        if (used == 0) return 0
-        var best = 0
-        for (s in 1 until used) if (bc[s] > bc[best]) best = s
-        val key = keys[best]
-        var sr = 0
-        var sg = 0
-        var sb = 0
-        var cnt = 0
-        for (yy in sy0..sy1) {
-            val row = yy * srcW
-            for (xx in sx0..sx1) {
-                val p = pixels[row + xx]
-                if ((p and 0xF8F8F8) != key) continue
-                sr += (p shr 16) and 0xFF
-                sg += (p shr 8) and 0xFF
-                sb += p and 0xFF
-                cnt++
-            }
-        }
-        if (cnt == 0) return 0
-        return (0xFF shl 24) or ((sr / cnt) shl 16) or ((sg / cnt) shl 8) or (sb / cnt)
-    }
-
-    /**
-     * 一个画像素的**原始**颜色：内缩 29% 区域里出现次数最多的那个像素值。
-     *
-     * 与 [regionMainColor] 的区别：这里不做任何平均。像素画生成要的是
-     * "原画有几种色，图纸就是几种色"，一平均就会生出源图不存在的中间色，
-     * 色卡只能取最近邻，结果整圈花瓣多出十几个灰粉色号。
-     */
-    private fun regionModeColor(
-        pixels: IntArray,
-        srcW: Int,
-        srcH: Int,
-        x0: Double,
-        y0: Double,
-        x1: Double,
-        y1: Double,
-    ): Int {
-        val inset = 0.29
-        val sx0 = (x0 + (x1 - x0) * inset).toInt().coerceIn(0, srcW - 1)
-        val sx1 = (x1 - (x1 - x0) * inset).toInt().coerceIn(sx0, srcW - 1)
-        val sy0 = (y0 + (y1 - y0) * inset).toInt().coerceIn(0, srcH - 1)
-        val sy1 = (y1 - (y1 - y0) * inset).toInt().coerceIn(sy0, srcH - 1)
-        val counts = HashMap<Int, Int>(16)
-        // 大块（照片被误判成像素画时块长可达 36px）按步长抽样，上限 ~400 个样本
-        val step = max(1, max(sx1 - sx0, sy1 - sy0) / 16)
-        var yy = sy0
-        while (yy <= sy1) {
-            val row = yy * srcW
-            var xx = sx0
-            while (xx <= sx1) {
-                // 量化到 5 位：JPEG 会把纯色块压出 ±3 的抖动，不并桶会碎成一堆"众数"
-                val key = pixels[row + xx] and 0x00F8F8F8
-                counts[key] = (counts[key] ?: 0) + 1
-                xx += step
-            }
-            yy += step
-        }
-        if (counts.isEmpty()) return pixels[(sy0.coerceIn(0, srcH - 1)) * srcW + sx0.coerceIn(0, srcW - 1)]
-        // 返回桶中心而不是桶内某个原始像素：同一块色的不同格子会被 JPEG
-        // 压到桶内不同值（255/253/251），逐格返回原始值会让一张 19 色的图
-        // 裂成 28 个"近同色"，映射后多出一堆几乎一样的豆色号。桶中心
-        // 对同一桶恒定，色号数才等于原画真实色层数。
-        val bestKey = counts.maxByOrNull { it.value }!!.key
-        val cr = (((bestKey shr 16) and 0xFF) or 0x04).coerceAtMost(255)
-        val cg = (((bestKey shr 8) and 0xFF) or 0x04).coerceAtMost(255)
-        val cb = ((bestKey and 0xFF) or 0x04).coerceAtMost(255)
-        return (0xFF shl 24) or (cr shl 16) or (cg shl 8) or cb
-    }
-
-    private fun bucketColor(key: Int): Int {
-        val r = (((key shr 16) and 0xFF) or 0x04).coerceAtMost(255)
-        val g = (((key shr 8) and 0xFF) or 0x04).coerceAtMost(255)
-        val b = ((key and 0xFF) or 0x04).coerceAtMost(255)
-        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-    }
-
-    private fun luminance(key: Int): Int {
-        val r = (key shr 16) and 0xFF
-        val g = (key shr 8) and 0xFF
-        val b = key and 0xFF
-        return (r * 299 + g * 587 + b * 114) / 1000
-    }
-
-    private fun deltaE(a: Int, b: Int): Double {
-        val la = ColorConversions.argbToLab(
-            (0xFF shl 24) or (a and 0x00FFFFFF),
-        )
-        val lb = ColorConversions.argbToLab(
-            (0xFF shl 24) or (b and 0x00FFFFFF),
-        )
-        val dl = la[0] - lb[0]
-        val da = la[1] - lb[1]
-        val db = la[2] - lb[2]
-        return kotlin.math.sqrt((dl * dl + da * da + db * db).toDouble())
-    }
-
     private fun sampleArt(
         pixels: IntArray,
         srcW: Int,
@@ -1107,13 +989,12 @@ object ImagePreprocessor {
             for (ax in 0 until aw) {
                 val x0 = art.ox + ax * bx
                 val x1 = x0 + bx
-                artR[ay * aw + ax] = if (useExact) {
-                    // 取块中心 42% 区域里出现最多的**原始颜色**：不平均，
-                    // 色号就是源图里那一层，JS 压缩振铃不会渗进色卡。
-                    regionModeColor(pixels, srcW, srcH, x0, y0, x1, y1)
-                } else {
-                    regionMainColor(pixels, srcW, srcH, x0, y0, x1, y1)
-                }
+                // 分档采样：中心 3×3 → 边缘环 25 点 → 整格密集。
+                // 纯色块 9 个点就结束；跨色格取占多数的一侧，不做整格平均。
+                // exact 档返回桶中心，保证同一画像素在所有格子里是同一个值。
+                artR[ay * aw + ax] = PixelCellSampler.sample(
+                    pixels, srcW, srcH, x0, y0, x1, y1, bucketCenter = useExact,
+                ).argb
             }
         }
         // 平坦块回收。真像素画的块内是纯色，四个子块必然同色；软像素画

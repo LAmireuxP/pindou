@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -21,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.pindou.app.ui.shadcn.ShCard
@@ -120,6 +122,42 @@ fun SettingsScreen(vm: AppViewModel) {
             }
         }
 
+        // 统计
+        ShCard(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Text("生成统计", style = MaterialTheme.typography.titleLarge)
+                Row(verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
+                    Text(
+                        "${vm.stats.total}",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        " 张图纸",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 6.dp, start = 2.dp),
+                    )
+                }
+                Text(
+                    "从 1.2.3 起统计，只计算真正保存进项目库的新图纸",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = Spacing.xxs),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                StatRow("图片生成", vm.stats.photo)
+                StatRow("像素画导入", vm.stats.pixel)
+                StatRow("色号图识别", vm.stats.chart)
+                StatRow("文字拼豆", vm.stats.text)
+                StatRow("空白画布", vm.stats.blank)
+                StatRow(".bpat 导入", vm.stats.bpat)
+            }
+        }
+
         // 关于
         ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -137,5 +175,27 @@ fun SettingsScreen(vm: AppViewModel) {
         }
 
         Row(modifier = Modifier.padding(bottom = Spacing.lg)) {}
+    }
+}
+
+@Composable
+private fun StatRow(label: String, count: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "$count",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

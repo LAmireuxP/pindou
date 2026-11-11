@@ -21,6 +21,13 @@ data class GeneratorOptions(
     val regionMinArea: Int? = null,           // null = 按过滤等级/格数自适应
     /** 显式「像素画生成」：放宽画像素检测并按最近画像素取色，不生成过渡色 */
     val exactArt: Boolean = false,
+    /**
+     * 校准页确认过的画像素网格（列 × 行）。
+     *
+     * 非空时跳过自动检测，按 srcW/cols 直接切块：自动检测在低对比像素画上
+     * 会漏掉浅色格，一旦把 56 列认成 54 列，整张图后面全部错位。
+     */
+    val pixelGrid: Pair<Int, Int>? = null,
     /** 自动贴着主体取景：四周空白多时先裁掉再采样（照片/插画默认开） */
     val autoFrame: Boolean = true,
 )
@@ -101,7 +108,7 @@ object PatternGenerator {
         onStage(GenerationStage.DOWNSAMPLE, 0f)
         val sample = ImagePreprocessor.sample(
             srcPixels, srcWidth, srcHeight, options.gridW, options.gridH, options.filterLevel,
-            options.exactArt,
+            options.exactArt, options.pixelGrid,
         )
         onStage(GenerationStage.DOWNSAMPLE, 1f)
 
@@ -244,7 +251,7 @@ object PatternGenerator {
         } else {
             ImagePreprocessor.sample(
                 srcPixels, srcWidth, srcHeight, options.gridW, options.gridH, FilterLevel.NONE,
-                options.exactArt,
+                options.exactArt, options.pixelGrid,
             )
         }
 
