@@ -139,8 +139,8 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                 .padding(top = Spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { vm.backToHome() }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回项目库")
+            IconButton(onClick = { vm.backFromPreview() }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回上一步")
             }
             Column(Modifier.weight(1f)) {
                 Text("图纸预览", style = MaterialTheme.typography.displayMedium)
@@ -341,11 +341,13 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
                 .padding(bottom = Spacing.lg, top = Spacing.xxs),
             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
-            OutlinedButton(
-                onClick = { vm.backToParams() },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("调整参数")
+            if (vm.canAdjustParams) {
+                OutlinedButton(
+                    onClick = { vm.backToParams() },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("调整参数")
+                }
             }
             OutlinedButton(
                 onClick = { vm.enterEditor() },

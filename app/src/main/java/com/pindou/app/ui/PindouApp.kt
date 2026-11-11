@@ -196,6 +196,7 @@ fun PindouApp(vm: AppViewModel) {
                 Screen.EDITOR -> com.pindou.app.ui.editor.EditorScreen(vm)
                 Screen.CONSTRUCTION -> com.pindou.app.ui.build.ConstructionScreen(vm)
                 Screen.CHART_CALIBRATE -> ChartCalibrateScreen(vm)
+                Screen.PIXEL_CALIBRATE -> PixelCalibrateScreen(vm)
             }
         }
     }

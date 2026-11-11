@@ -172,4 +172,89 @@ class ImageTransformsTest {
         assertEquals(200 to 200, ImageTransforms.scaledGridSize(100, 180, 3.0))
         assertEquals(5 to 8, ImageTransforms.scaledGridSize(8, 15, 0.5)) // 4→5, 7.5→8
     }
+
+    @Test
+    fun `锁比例拖左边时右边固定`() {
+        val rect = CropRect(20f, 20f, 120f, 80f)
+        val out = ImageTransforms.edgeResizeLocked(
+            rect, CropEdgeSide.LEFT, target = 60f, ratio = 2f, maxW = 200f, maxH = 100f,
+        )
+        assertEquals(120f, out.right)
+        assertEquals(60f, out.width)
+        assertEquals(30f, out.height)
+        assertEquals(35f, out.top) // 围绕原中心 y=50 展开
+        assertEquals(65f, out.bottom)
+    }
+
+    @Test
+    fun `锁比例拖右边保持左边与宽高比`() {
+        val rect = CropRect(20f, 20f, 120f, 80f)
+        val out = ImageTransforms.edgeResizeLocked(
+            rect, CropEdgeSide.RIGHT, target = 180f, ratio = 2f, maxW = 200f, maxH = 100f,
+        )
+        assertEquals(20f, out.left)
+        assertEquals(160f, out.width)
+        assertEquals(80f, out.height)
+        assertEquals(10f, out.top)
+        assertEquals(90f, out.bottom)
+    }
+
+    @Test
+    fun `锁比例拖上边保持底边并围绕中心展开`() {
+        val rect = CropRect(20f, 10f, 120f, 80f)
+        val out = ImageTransforms.edgeResizeLocked(
+            rect, CropEdgeSide.TOP, target = 10f, ratio = 1f, maxW = 200f, maxH = 100f,
+        )
+        assertEquals(80f, out.bottom)
+        assertEquals(70f, out.width)
+        assertEquals(70f, out.height)
+        assertEquals(35f, out.left)
+        assertEquals(10f, out.top)
+    }
+
+    @Test
+    fun `锁比例拖下边碰到边界时整体收缩`() {
+        val rect = CropRect(20f, 20f, 120f, 80f)
+        val out = ImageTransforms.edgeResizeLocked(
+            rect, CropEdgeSide.BOTTOM, target = 95f, ratio = 2f, maxW = 200f, maxH = 100f,
+        )
+        assertTrue(out.top == 20f)
+        assertTrue(out.bottom <= 100f)
+        assertEquals(2f, out.width / out.height, 0.0001f)
+        assertTrue(out.left >= 0f && out.right <= 200f)
+    }
+
+    @Test
+    fun `锁比例边柄越界时不会翻转选区`() {
+        val rect = CropRect(20f, 20f, 120f, 80f)
+        val out = ImageTransforms.edgeResizeLocked(
+            rect, CropEdgeSide.LEFT, target = 500f, ratio = 1f, maxW = 200f, maxH = 100f,
+        )
+        assertTrue(out.left >= 0f)
+        assertTrue(out.right > out.left)
+        assertEquals(1f, out.width / out.height, 0.0001f)
+    }
+
+    @Test
+    fun `自由裁剪网格跟随选区宽高比`() {
+        assertEquals(60 to 50, ImageTransforms.gridSizeForAspect(1.2f, 60))
+        assertEquals(50 to 60, ImageTransforms.gridSizeForAspect(0.8333333f, 60))
+        assertEquals(60 to 60, ImageTransforms.gridSizeForAspect(1f, 60))
+    }
+
+    @Test
+    fun `自由裁剪网格长边锚定且钳制`() {
+        assertEquals(200 to 100, ImageTransforms.gridSizeForAspect(2f, 200))
+        assertEquals(5 to 200, ImageTransforms.gridSizeForAspect(0.02f, 200))
+    }
+
+    @Test
+    fun `切正方形保留原选区中心`() {
+        val rect = CropRect(10f, 20f, 170f, 100f)
+        val out = ImageTransforms.squareAround(rect, maxW = 200f, maxH = 120f)
+        assertEquals(80f, out.width, 0.0001f)
+        assertEquals(80f, out.height, 0.0001f)
+        assertEquals(90f, (out.left + out.right) / 2f, 0.0001f)
+        assertEquals(60f, (out.top + out.bottom) / 2f, 0.0001f)
+    }
 }

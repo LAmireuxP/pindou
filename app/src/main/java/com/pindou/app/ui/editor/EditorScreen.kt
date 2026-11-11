@@ -496,6 +496,7 @@ fun EditorScreen(vm: AppViewModel) {
 
         Text(
             when (vm.editorTool) {
+                EditorTool.NONE -> "先选一个工具再编辑 · 单指拖动画布 · 双指缩放"
                 EditorTool.PAINT -> "点按/划动上色 · 双指缩放 · 长按单格菜单"
                 EditorTool.ERASE ->
                     "擦除 ${vm.editorBrushSize}×${vm.editorBrushSize} · 双指缩放 · 长按单格菜单"
@@ -1146,6 +1147,7 @@ private fun applyCellColor(vm: AppViewModel, engine: EditorEngine, cell: Int, co
 private fun handleTap(vm: AppViewModel, engine: EditorEngine, cell: Int, brushSize: Int) {
     if (cell < 0) return
     when (vm.editorTool) {
+        EditorTool.NONE -> Unit
         EditorTool.PICKER -> {
             val color = engine.cells.getOrNull(cell) ?: return
             if (color >= 0) vm.selectEditorColor(color)
@@ -1190,6 +1192,7 @@ private fun handleStrokeCell(
 ) {
     if (cell < 0) return
     when (vm.editorTool) {
+        EditorTool.NONE -> Unit
         EditorTool.PAINT -> stampBrush(engine, cell, brushSize, session, vm.editorColor)
         EditorTool.ERASE -> stampBrush(engine, cell, brushSize, session, -1)
         EditorTool.FILL, EditorTool.PICKER, EditorTool.PAN -> Unit
@@ -1656,7 +1659,12 @@ private fun EditorCanvas(
                                     }
                                 }
 
-                                if (!isTransform && tool == EditorTool.PAN && moved) {
+                                // 未选工具时单指只平移画布，不落笔：新手进图先看，
+                                // 手一滑也不会把颜色涂到格子上。
+                                if (!isTransform &&
+                                    (tool == EditorTool.PAN || tool == EditorTool.NONE) &&
+                                    moved
+                                ) {
                                     transform.offset += pos - last
                                     clampTransform(canvas, engine, transform)
                                 } else if (!isTransform && moved && !longPressed &&
@@ -1707,7 +1715,9 @@ private fun EditorCanvas(
                                         longPressCommitState(startCell)
                                     }
                                 }
-                                if (!isTransform && !longPressed && tool != EditorTool.PAN) {
+                                if (!isTransform && !longPressed &&
+                                    tool != EditorTool.PAN && tool != EditorTool.NONE
+                                ) {
                                     val totalMove = hypot(
                                         (start.x - last.x).toDouble(),
                                         (start.y - last.y).toDouble(),
