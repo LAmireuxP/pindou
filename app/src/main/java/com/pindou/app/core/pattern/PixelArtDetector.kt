@@ -31,6 +31,24 @@ import kotlin.math.sqrt
  */
 object PixelArtDetector {
 
+    /** 原生像素画的画布上限：再大就必须按放大后的周期网格检测 */
+    private const val MAX_NATIVE_SIDE = 200
+
+    /** 原生像素画的像素总量上限，避免把 200×200 照片误判成 1:1 */
+    private const val MAX_NATIVE_PIXELS = 40_000
+
+    /** 原生像素画的颜色桶上限（4bit/通道）。照片缩到 60×60 也远高于这个值 */
+    private const val MAX_NATIVE_COLORS = 160
+
+    /** 相邻像素同色占比：原生像素画几乎没有连续渐变 */
+    private const val MIN_NATIVE_FLAT_SHARE = 0.55f
+
+    /** 强边占比下限：纯色图和模糊照片都不该进入 1:1 支路 */
+    private const val MIN_NATIVE_EDGE_SHARE = 0.015f
+
+    /** 2×2 同色块占比：像素画的色块内部必须成片，噪点图不满足 */
+    private const val MIN_NATIVE_BLOCK_SHARE = 0.70f
+
     /** 小于 6px 的块和 JPEG 压缩噪声无法区分 */
     private const val MIN_BLOCK = 6
 
@@ -85,6 +103,126 @@ object PixelArtDetector {
     private var cachedValue: Result? = null
     private var cachedValid = false
     private var cachedRelaxed = false
+    private var cachedNativeValid = false
+    private var cachedNativeValue: Result? = null
+
+    /**
+     * 原生 1:1 像素图检测。
+     *
+     * 60×60 的 PNG 只有一个画像素占一个真实像素，不能用 6..36px 的
+     * 「放大块」思路去猜；否则 1px 的格线会被当成噪声，最后掉进 32×32
+     * 兜底。这里直接验证「小画布 + 离散色 + 成片色块」三个特征：
+     *
+     * - 小画布：长边 ≤200、总像素 ≤40000；
+     * - 离散色：4bit 色桶 ≤160；
+     * - 成片：相邻同色 ≥55%，2×2 同色 ≥70%；
+     * - 有内容：强边 ≥1.5%，排除纯色底图。
+     *
+     * 命中后网格就是源图本身，一格一像素，偏移为 0。
+     */
+    @Synchronized
+    fun detectNative(pixels: IntArray, srcW: Int, srcH: Int): Result? {
+        if (cachedNativeValid && cachedPixels === pixels &&
+            cachedW == srcW && cachedH == srcH
+        ) {
+            return cachedNativeValue
+        }
+        val value = detectNativeUncached(pixels, srcW, srcH)
+        cachedPixels = pixels
+        cachedW = srcW
+        cachedH = srcH
+        cachedNativeValue = value
+        cachedNativeValid = true
+        return value
+    }
+
+    private fun detectNativeUncached(
+        pixels: IntArray,
+        srcW: Int,
+        srcH: Int,
+    ): Result? {
+        if (srcW < 8 || srcH < 8) return null
+        if (srcW > MAX_NATIVE_SIDE || srcH > MAX_NATIVE_SIDE) return null
+        if (srcW * srcH > MAX_NATIVE_PIXELS) return null
+        if (pixels.size != srcW * srcH) return null
+
+        var opaque = 0
+        var flatPairs = 0
+        var pairs = 0
+        var strongEdges = 0
+        var blockPairs = 0
+        var blockTotal = 0
+        val colors = HashSet<Int>(256)
+
+        for (y in 0 until srcH) {
+            val row = y * srcW
+            for (x in 0 until srcW) {
+                val p = pixels[row + x]
+                val transparent = (p ushr 24) < 32
+                if (!transparent) {
+                    opaque++
+                    colors.add(p and 0xF0F0F0)
+                } else {
+                    colors.add(0)
+                }
+
+                if (x > 0) {
+                    pairs++
+                    val q = pixels[row + x - 1]
+                    if (samePixel(p, q, FLAT_TOLERANCE)) flatPairs++
+                    if (edgeDiff(p, q) >= 24) strongEdges++
+                }
+                if (y > 0) {
+                    pairs++
+                    val q = pixels[row - srcW + x]
+                    if (samePixel(p, q, FLAT_TOLERANCE)) flatPairs++
+                    if (edgeDiff(p, q) >= 24) strongEdges++
+                }
+                if (x > 0 && y > 0) {
+                    blockTotal++
+                    val a = pixels[row + x - 1]
+                    val b = pixels[row - srcW + x - 1]
+                    val c = pixels[row - srcW + x]
+                    if (samePixel(p, a, 8) && samePixel(p, b, 8) && samePixel(p, c, 8)) {
+                        blockPairs++
+                    }
+                }
+            }
+        }
+
+        // 全透明图没有可拼豆的内容；占比太低说明只是一张带透明通道的图标。
+        if (opaque < srcW * srcH / 4) return null
+        if (colors.size > MAX_NATIVE_COLORS) return null
+        val flatShare = if (pairs == 0) 0f else flatPairs.toFloat() / pairs
+        val edgeShare = if (pairs == 0) 0f else strongEdges.toFloat() / pairs
+        val blockShare = if (blockTotal == 0) 0f else blockPairs.toFloat() / blockTotal
+        if (flatShare < MIN_NATIVE_FLAT_SHARE) return null
+        if (edgeShare < MIN_NATIVE_EDGE_SHARE) return null
+        if (blockShare < MIN_NATIVE_BLOCK_SHARE) return null
+
+        return Result(
+            blockW = 1.0,
+            blockH = 1.0,
+            artW = srcW,
+            artH = srcH,
+            ox = 0.0,
+            oy = 0.0,
+        )
+    }
+
+    private fun samePixel(a: Int, b: Int, tolerance: Int): Boolean {
+        val at = (a ushr 24) < 32
+        val bt = (b ushr 24) < 32
+        if (at || bt) return at && bt
+        return channelDiff(a, b) <= tolerance
+    }
+
+    private fun edgeDiff(a: Int, b: Int): Int {
+        val at = (a ushr 24) < 32
+        val bt = (b ushr 24) < 32
+        if (at || bt) return if (at == bt) 0 else 255
+        return channelDiff(a, b)
+    }
 
     /**
      * @param relaxed 宽松档：用户显式选了「像素画生成」时用。放宽自相关、

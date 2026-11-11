@@ -1,5 +1,6 @@
 package com.pindou.app.ui.shadcn
 
+import com.pindou.app.ui.icon.MorphIcons
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,13 +12,13 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonElevation
@@ -233,6 +234,7 @@ fun ShChip(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    leading: ImageVector? = null,
 ) {
     val shape = RoundedCornerShape(9999.dp)
     Row(
@@ -246,6 +248,16 @@ fun ShChip(
             .padding(horizontal = 11.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (leading != null) {
+            Icon(
+                imageVector = leading,
+                contentDescription = null,
+                tint = if (selected) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(12.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+        }
         Text(
             text,
             style = MaterialTheme.typography.labelMedium,
@@ -270,7 +282,7 @@ fun ShSearchField(
         placeholder = { Text(placeholder, style = MaterialTheme.typography.bodyMedium) },
         leadingIcon = {
             Icon(
-                Icons.Rounded.Search,
+                MorphIcons.Search,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )

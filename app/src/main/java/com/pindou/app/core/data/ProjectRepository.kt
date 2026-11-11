@@ -25,6 +25,9 @@ class ProjectRepository(private val context: Context) {
 
     fun observeAll(): Flow<List<ProjectEntity>> = dao.observeAll()
 
+    /** 项目库列表：不读格数据 BLOB，只取卡片字段 */
+    fun observeSummaries(): Flow<List<ProjectSummary>> = dao.observeSummaries()
+
     suspend fun get(id: Long): ProjectEntity? = withContext(Dispatchers.IO) { dao.getById(id) }
 
     /** 新建项目（生成图纸后调用），返回项目 id */

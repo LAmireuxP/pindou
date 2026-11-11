@@ -1,5 +1,6 @@
 package com.pindou.app.ui.build
 
+import com.pindou.app.ui.icon.MorphIcons
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -10,8 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -93,7 +92,7 @@ fun ConstructionScreen(vm: AppViewModel) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = { vm.exitConstruction() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "退出施工")
+                    Icon(MorphIcons.ArrowLeft, contentDescription = "退出施工")
                 }
                 Text(
                     "施工进度 ${state.doneCount}/${state.total}（${(state.progress * 100).toInt()}%）",

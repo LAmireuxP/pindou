@@ -17,6 +17,7 @@ import com.pindou.app.core.palette.PaletteAssets
 import com.pindou.app.core.build.ConstructionState
 import com.pindou.app.core.data.GridCodec
 import com.pindou.app.core.data.ProjectEntity
+import com.pindou.app.core.data.ProjectSummary
 import com.pindou.app.core.data.ProjectRepository
 import com.pindou.app.core.data.SettingsStore
 import com.pindou.app.core.editor.EditorEngine
@@ -24,6 +25,7 @@ import com.pindou.app.core.editor.ColorReplaceOps
 import com.pindou.app.core.editor.PaletteOps
 import com.pindou.app.core.image.CropRect
 import com.pindou.app.core.image.ImageTransforms
+import com.pindou.app.core.image.TransformedImage
 import com.pindou.app.core.chart.ChartRecognizer
 import com.pindou.app.core.pattern.GenerationStage
 import com.pindou.app.core.pattern.BpatCodec
@@ -34,6 +36,8 @@ import com.pindou.app.core.pattern.PatternGenerator
 import com.pindou.app.core.pattern.PatternResult
 import com.pindou.app.core.pattern.PixelCalibration
 import com.pindou.app.core.pattern.PixelArtDetector
+import com.pindou.app.core.pattern.PixelGridInspector
+import com.pindou.app.core.pattern.PixelImportPipeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -153,6 +157,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var cropRect by mutableStateOf<CropRect?>(null)
         private set
 
+    /**
+     * 用户是否显式点过「原图」预设。
+     *
+     * 不能再用「选区是否等于整图」来反推选中态：导入时默认就是整图，
+     * 那样「原图」会一直高亮，而用户实际上想要的是自由裁剪。
+     */
+    var cropOriginalPreset by mutableStateOf(false)
+        private set
+
     /** 几何变换执行中标志（防止连点导致的状态竞争） */
     private var transformRunning = false
 
@@ -224,6 +237,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var pixelCalibrationDetected by mutableStateOf(false)
         private set
 
+    /** 当前网格来自原生 1:1、周期检测，还是用户手动兜底 */
+    var pixelCalibrationMethod by mutableStateOf(PixelGridInspector.Method.MANUAL)
+        private set
+
+    /** 当前网格的逐格采样结果：预览小图与占用/空白/颜色统计 */
+    var pixelGridAnalysis by mutableStateOf<PixelGridInspector.Analysis?>(null)
+        private set
+
+    /**
+     * 当前网格的最终图纸（已过色卡、背景移除与清理）。
+     *
+     * 「看图纸」直接铺它的色号，顶部「完成」也复用它，保证预览和成品
+     * 是同一张图，而不是预览一套采样色、生成另一套色卡色。
+     */
+    var pixelCalibrationPreview by mutableStateOf<PixelImportPipeline.Conversion?>(null)
+        private set
+
+    var pixelAnalysisRunning by mutableStateOf(false)
+        private set
+
     var pixelRefineRunning by mutableStateOf(false)
         private set
 
@@ -234,6 +267,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var pixelCalibrated = false
 
     private var pixelCalibrationJob: Job? = null
+    private var pixelRefineJob: Job? = null
+    private var pixelAnalysisJob: Job? = null
+    private var pixelAnalysisToken = 0
+    /** 每次吸附自增；协程回来时 token 不同就丢弃结果，避免旧网格覆盖新网格 */
+    private var pixelRefineToken = 0
+
+    /**
+     * 进入像素校准前保留原图和原裁剪框。
+     *
+     * 裁剪确认后会把工作图换成裁出来的小图；用户从校准页按返回时如果
+     * 只切 screen，画布会显示裁后图、裁剪框却按整图记录，第二次框选
+     * 必然错位。这里保存进入校准前的快照，返回时原样恢复。
+     */
+    private var pixelCropSourcePixels: IntArray? = null
+    private var pixelCropSourceW = 0
+    private var pixelCropSourceH = 0
+    private var pixelCropSourceRect: CropRect? = null
 
 
     // 项目库与设置
@@ -246,7 +296,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     var projectName by mutableStateOf("未命名图纸")
 
-    val projects = repository.observeAll().stateIn(
+    // 列表只订阅轻量投影；整行（含 cells BLOB）在 openProject / duplicate 时按 id 读取
+    val projects = repository.observeSummaries().stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
         emptyList(),
@@ -447,6 +498,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 pixelArtMode = pixelMode
                 pixelArtGrid = art?.let { it.artW to it.artH }
                 pixelCalibrated = false
+                pixelCalibrationMethod = PixelGridInspector.Method.MANUAL
+                pixelGridAnalysis = null
+                pixelCalibrationPreview = null
+                pixelAnalysisJob?.cancel()
+                pixelAnalysisToken++
+                pixelAnalysisRunning = false
+                pixelCropSourcePixels = null
+                pixelCropSourceW = 0
+                pixelCropSourceH = 0
+                pixelCropSourceRect = null
                 // 像素画原图默认「无过滤」：不聚类、不限色，逐画像素直接映射
                 // 色卡，源图每一层淡粉/淡黄都能落成独立色号。照片维持中过滤。
                 filterLevel = if (pixelMode || art != null) FilterLevel.NONE else FilterLevel.MEDIUM
@@ -458,6 +519,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 imageW = size[0]
                 imageH = size[1]
                 cropAspectMode = CropAspectMode.FREE
+                cropOriginalPreset = false
                 // 导入时默认保留整张图。自由模式下网格会跟随选区比例，
                 // 不再用中心方框去猜主体，也不会出现「方框配长格」的拉伸。
                 cropRect = if (art != null) {
@@ -480,31 +542,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 adaptiveScale = 1f
                 importError = null
                 genState = GenState.Idle
+                // 无论照片还是像素画，都先让用户确认画布范围。
+                // 像素画只是不显示网格着色预览：它的网格在下一步专门校准，
+                // 裁剪页再叠一层格线只会让用户分不清该调哪一层。
+                syncCropGridToRect(cropRect!!)
                 if (pixelMode) {
-                    // 像素导入先校准：自动检测只给初值，用户能移动/改行列/改格宽，
-                    // 再决定是否按格线智能吸附。
-                    pixelCalibration = art?.let {
-                        PixelCalibration.Grid(
-                            cols = it.artW.coerceIn(PixelCalibration.MIN_COLS, PixelCalibration.MAX_COLS),
-                            rows = it.artH.coerceIn(PixelCalibration.MIN_COLS, PixelCalibration.MAX_COLS),
-                            cellW = it.blockW.coerceIn(PixelCalibration.MIN_CELL, PixelCalibration.MAX_CELL),
-                            cellH = it.blockH.coerceIn(PixelCalibration.MIN_CELL, PixelCalibration.MAX_CELL),
-                            offsetX = it.ox,
-                            offsetY = it.oy,
-                        )
-                    } ?: PixelCalibration.fallback(size[0], size[1])
-                    pixelCalibrationDetected = art != null
-                    pixelCalibrationSmart = true
-                    pixelCalibrationScore = if (art != null) {
-                        PixelCalibration.edgeScore(pixels, size[0], size[1], pixelCalibration!!)
-                    } else {
-                        0f
-                    }
+                    // 像素画流程：先裁剪圈定画布，确认后才校准。
+                    // 自动检测在这里只负责给出初始裁剪框；真正的网格在裁剪后的
+                    // 图上重新检测一次，避免整图上的背景留白把格宽算大。
+                    pixelCalibrated = false
+                    pixelCalibration = null
+                    pixelCalibrationDetected = false
                     pixelCalibrationApplied = false
-                    cropRect = CropRect.full(size[0], size[1])
-                    screen = Screen.PIXEL_CALIBRATE
+                    cropPreviewJob?.cancel()
+                    cropPreview = null
+                    cropPreviewRunning = false
+                    screen = Screen.CROP
                 } else {
-                    syncCropGridToRect(cropRect!!)
                     screen = Screen.CROP
                     scheduleCropPreview()
                 }
@@ -569,6 +623,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun openCrop() {
         if (imagePixels == null || imageW <= 0 || imageH <= 0) return
         cropAspectMode = CropAspectMode.FREE
+        cropOriginalPreset = false
         // 重新裁剪从整张图开始，用户再按主体框选；默认不再替用户切方图
         cropRect = CropRect.full(imageW, imageH)
         cropGridUserSet = false
@@ -579,13 +634,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateCropRect(rect: CropRect) {
         cropRect = rect
+        // 手动拖过选框就不再算「原图」预设
+        cropOriginalPreset = false
         if (cropAspectMode == CropAspectMode.FREE) syncCropGridToRect(rect)
+        scheduleCropPreview()
+    }
+
+    /** 显式选择「原图」：整图入框，并记住这个高亮状态 */
+    fun selectCropOriginal() {
+        if (imageW <= 0 || imageH <= 0) return
+        cropAspectMode = CropAspectMode.FREE
+        cropRect = CropRect.full(imageW, imageH)
+        cropOriginalPreset = true
+        syncCropGridToRect(cropRect!!)
         scheduleCropPreview()
     }
 
     /** 切换自由 / 正方形；正方形立刻把选区和网格都收成 1:1 */
     fun changeCropAspectMode(mode: CropAspectMode) {
         if (cropAspectMode == mode) return
+        cropOriginalPreset = false
         cropAspectMode = mode
         if (imageW <= 0 || imageH <= 0) return
         when (mode) {
@@ -798,7 +866,99 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 确认裁剪并进入参数页；选区为全图时跳过像素复制 */
+    /**
+     * 像素模式：用当前裁剪框（或整图）初始化校准网格。
+     *
+     * 自动检测必须在裁剪后的图上重跑：整图里的背景留白会把单格尺寸
+     * 算大，进校准页时线全都压在色块中间。检测失败就用覆盖整图的
+     * 32×32 兜底，至少让用户有东西可拖。
+     *
+     * 智能对齐默认开着，所以这里直接在进页面之前吸附一次，并把预览
+     * 算完再切屏——用户第一眼看到的就是最终网格和最终图纸。
+     */
+    private suspend fun initPixelCalibration(pixels: IntArray, w: Int, h: Int) {
+        pixelCalibrationSmart = true
+        // 冷启动直接导入时色卡可能还没加载完；没有色卡就没有最终预览，
+        // 用户点「看图纸」会看到空页。这里先补一次，代价可忽略。
+        if (selectedPalette == null) ensurePalettes()
+        val prepared = PixelImportPipeline.prepare(
+            pixels, w, h, pixelCalibrationSmart, pixelCalibrationThreshold,
+        )
+        withContext(Dispatchers.Main) { applyPreparedGrid(prepared) }
+        analyzePixelGridNow(pixels, w, h, prepared.grid, prepared.method)
+    }
+
+    private fun applyPreparedGrid(prepared: PixelImportPipeline.Prepared) {
+        pixelCalibration = prepared.grid
+        pixelCalibrationMethod = prepared.method
+        pixelCalibrationDetected = prepared.detected
+        pixelCalibrationScore = prepared.score
+        pixelArtGrid = prepared.grid.cols to prepared.grid.rows
+        pixelCalibrationApplied = prepared.applied
+    }
+
+    /**
+     * 逐格采样 + 最终图纸预览。
+     *
+     * 两件事必须一起算：统计来自原始采样，预览来自色卡生成。拖动与滚轮
+     * 连续触发，90ms 防抖；token 防止旧网格的慢结果覆盖新结果。
+     */
+    private fun schedulePixelGridAnalysis(delayMs: Long = 90L) {
+        val pixels = imagePixels ?: return
+        val w = imageW
+        val h = imageH
+        val grid = pixelCalibration ?: return
+        val method = pixelCalibrationMethod
+        val palette = selectedPalette
+        pixelAnalysisJob?.cancel()
+        val token = ++pixelAnalysisToken
+        pixelAnalysisRunning = true
+        pixelAnalysisJob = viewModelScope.launch(Dispatchers.Default) {
+            if (delayMs > 0L) delay(delayMs)
+            val analysis = PixelGridInspector.analyze(pixels, w, h, grid, method)
+            val conversion = palette?.let { p ->
+                runCatching {
+                    PixelImportPipeline.convert(pixels, w, h, grid, p, currentOptions())
+                }.getOrNull()
+            }
+            withContext(Dispatchers.Main) {
+                if (token == pixelAnalysisToken) {
+                    pixelGridAnalysis = analysis
+                    pixelCalibrationPreview = conversion
+                    pixelAnalysisRunning = false
+                }
+            }
+        }
+    }
+
+    /** 进页面/重新识别时同步算完，避免先显示旧网格再跳一下 */
+    private suspend fun analyzePixelGridNow(
+        pixels: IntArray,
+        w: Int,
+        h: Int,
+        grid: PixelCalibration.Grid,
+        method: PixelGridInspector.Method,
+    ) {
+        pixelAnalysisJob?.cancel()
+        val token = ++pixelAnalysisToken
+        pixelAnalysisRunning = true
+        val palette = selectedPalette
+        val analysis = PixelGridInspector.analyze(pixels, w, h, grid, method)
+        val conversion = palette?.let { p ->
+            runCatching {
+                PixelImportPipeline.convert(pixels, w, h, grid, p, currentOptions())
+            }.getOrNull()
+        }
+        withContext(Dispatchers.Main) {
+            if (token == pixelAnalysisToken) {
+                pixelGridAnalysis = analysis
+                pixelCalibrationPreview = conversion
+                pixelAnalysisRunning = false
+            }
+        }
+    }
+
+    /** 确认裁剪：像素画进校准页，照片进参数页 */
     fun confirmCrop() {
         val pixels = imagePixels ?: return
         val rect = cropRect ?: return
@@ -808,6 +968,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         syncCropGridToRect(rect)
         val isFull = rect.left <= 0f && rect.top <= 0f &&
             rect.right >= w.toFloat() && rect.bottom >= h.toFloat()
+        if (pixelArtMode) {
+            if (transformRunning) return
+            // 校准页的「返回」要回到这一屏的原图与原选框。校准确认会把
+            // imagePixels 换成裁后小图，不保存快照就只能退回一张被裁过的图，
+            // 选区坐标还按整图记，第二次框选必然错位。
+            pixelCropSourcePixels = pixels
+            pixelCropSourceW = w
+            pixelCropSourceH = h
+            pixelCropSourceRect = rect
+            launchTransform {
+                val cropped = if (isFull) {
+                    TransformedImage(pixels, w, h)
+                } else {
+                    ImageTransforms.crop(pixels, w, h, rect)
+                }
+                if (!isFull) {
+                    imagePixels = cropped.pixels
+                    imageW = cropped.width
+                    imageH = cropped.height
+                    rebuildPreview()
+                }
+                cropRect = CropRect.full(cropped.width, cropped.height)
+                cropPreviewJob?.cancel()
+                cropPreview = null
+                cropPreviewRunning = false
+                pixelCalibrated = false
+                pixelCalibration = null
+                pixelGridAnalysis = null
+                pixelCalibrationPreview = null
+                initPixelCalibration(cropped.pixels, cropped.width, cropped.height)
+                withContext(Dispatchers.Main) {
+                    screen = Screen.PIXEL_CALIBRATE
+                }
+            }
+            return
+        }
         if (isFull) {
             paramsFromCrop = true
             screen = Screen.PARAMS
@@ -844,76 +1040,138 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------- 像素画校准页 ----------
 
-    /** 网格位置微调：一次移动 1 个源图像素，并保持在图内 */
+    /**
+     * 网格位置微调：一次移动 1 个源图像素。
+     *
+     * 网格始终整张收在图内（fittedWithin），页面上的线就是完成时裁的线；
+     * 之前允许滑出边缘，确认时再缩块长，用户会看到网格突然跳一下，
+     * 预览也跟着错位。
+     */
     fun pixelCalibrationNudge(dx: Double, dy: Double) {
-        pixelCalibration = pixelCalibration?.nudged(dx, dy)?.coerceWithin(imageW, imageH)
+        pixelCalibration = pixelCalibration?.nudged(dx, dy)?.fittedWithin(imageW, imageH)
         pixelCalibrationApplied = false
+        pixelCalibrationMethod = PixelGridInspector.Method.MANUAL
+        schedulePixelGridAnalysis(delayMs = 40L)
     }
 
     /** 改列数：右边界不动，格子自动变宽/变窄 */
     fun pixelCalibrationSetCols(cols: Int) {
-        pixelCalibration = pixelCalibration?.withCols(cols)
+        pixelCalibration = pixelCalibration?.withCols(cols)?.fittedWithin(imageW, imageH)
         pixelCalibrationApplied = false
+        pixelCalibrationMethod = PixelGridInspector.Method.MANUAL
+        schedulePixelGridAnalysis()
     }
 
-    /** 改行数：下边界不动 */
+    /** 改行数：下边界不动，适用于非等比缩放的像素画 */
     fun pixelCalibrationSetRows(rows: Int) {
-        pixelCalibration = pixelCalibration?.withRows(rows)
+        pixelCalibration = pixelCalibration?.withRows(rows)?.fittedWithin(imageW, imageH)
         pixelCalibrationApplied = false
+        pixelCalibrationMethod = PixelGridInspector.Method.MANUAL
+        schedulePixelGridAnalysis()
     }
 
-    /** 改单元格边长：当前覆盖范围不动，列/行数反向推导 */
+    /** 改单元格边长：列/行数保持用户已经定好的值，只缩放格子本身 */
     fun pixelCalibrationSetCellSize(px: Float) {
-        pixelCalibration = pixelCalibration?.withCellSize(px.toDouble())
+        pixelCalibration = pixelCalibration?.withCell(px.toDouble())?.fittedWithin(imageW, imageH)
         pixelCalibrationApplied = false
+        pixelCalibrationMethod = PixelGridInspector.Method.MANUAL
+        schedulePixelGridAnalysis()
     }
 
     /** 恢复自动检测的初值；检测失败则给覆盖整图的 32×32 兜底 */
     fun pixelCalibrationReset() {
         val pixels = imagePixels ?: return
-        val art = PixelArtDetector.detectForced(pixels, imageW, imageH)
-        pixelCalibration = art?.let {
-            PixelCalibration.Grid(
-                it.artW.coerceIn(PixelCalibration.MIN_COLS, PixelCalibration.MAX_COLS),
-                it.artH.coerceIn(PixelCalibration.MIN_COLS, PixelCalibration.MAX_COLS),
-                it.blockW.coerceIn(PixelCalibration.MIN_CELL, PixelCalibration.MAX_CELL),
-                it.blockH.coerceIn(PixelCalibration.MIN_CELL, PixelCalibration.MAX_CELL),
-                it.ox, it.oy,
-            )
-        } ?: PixelCalibration.fallback(imageW, imageH)
-        pixelCalibrationDetected = art != null
-        pixelCalibrationScore = PixelCalibration.edgeScore(pixels, imageW, imageH, pixelCalibration!!)
-        pixelCalibrationApplied = false
+        if (pixelCalibrationBusy) return
+        val w = imageW
+        val h = imageH
+        pixelRefineJob?.cancel()
+        pixelCalibrationJob?.cancel()
+        val token = ++pixelRefineToken
+        pixelRefineRunning = true
+        pixelCalibrationJob = viewModelScope.launch(Dispatchers.Default) {
+            try {
+                // 重新识别也要走完整流程：检测 + 默认智能吸附，不能只换网格
+                // 让开关显示"开启"、实际没有吸附。
+                val prepared = PixelImportPipeline.prepare(
+                    pixels, w, h, pixelCalibrationSmart, pixelCalibrationThreshold,
+                )
+                withContext(Dispatchers.Main) { applyPreparedGrid(prepared) }
+                analyzePixelGridNow(pixels, w, h, prepared.grid, prepared.method)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    if (token == pixelRefineToken) pixelRefineRunning = false
+                }
+            }
+        }
+    }
+
+    /** 用户在校准页点「重新识别」 */
+    fun pixelCalibrationRedetect() {
+        if (pixelCalibrationBusy) return
+        pixelCalibrationReset()
     }
 
     fun pixelCalibrationSetSmart(enabled: Boolean) {
         pixelCalibrationSmart = enabled
-        if (enabled) refinePixelCalibration(applyToGrid = true)
+        pixelRefineJob?.cancel()
+        if (enabled) {
+            refinePixelCalibration(applyToGrid = true, requireSmart = true)
+        } else {
+            // 关掉开关后，还在跑的吸附不许再写回网格；否则用户看到开关
+            // 是关的，网格却突然跳一下。
+            pixelCalibrationJob?.cancel()
+            pixelRefineToken++
+            pixelRefineRunning = false
+            pixelCalibrationApplied = false
+        }
     }
 
+    /** 阈值变化后自动重吸附；滑条会连续回调，220ms 防抖 */
     fun pixelCalibrationSetThreshold(value: Float) {
-        pixelCalibrationThreshold = value.coerceIn(0.01f, 0.40f)
+        pixelCalibrationThreshold = value.coerceIn(0.05f, 0.90f)
+        if (!pixelCalibrationSmart) return
+        pixelRefineJob?.cancel()
+        pixelRefineJob = viewModelScope.launch {
+            delay(220)
+            refinePixelCalibration(applyToGrid = true, requireSmart = true)
+        }
     }
 
     /**
-     * 智能对齐。默认只更新分数，不改用户网格；点「智能对齐」开关时
-     * 直接应用，让用户一眼看到吸附结果。
+     * 智能对齐：在用户当前网格附近吸附。
+     *
+     * [applyToGrid] 为 true 时把吸附结果直接落到页面；开关打开、改阈值、
+     * 点「自动对齐」都走这里，保证开关状态和实际网格一致。
+     *
+     * [requireSmart] 用于开关/阈值触发的吸附：协程返回时开关可能已经被
+     * 关掉，此时丢弃结果，不覆盖用户手动摆好的网格。
      */
-    private fun refinePixelCalibration(applyToGrid: Boolean) {
+    private fun refinePixelCalibration(applyToGrid: Boolean, requireSmart: Boolean = false) {
         val pixels = imagePixels ?: return
         val grid = pixelCalibration ?: return
-        if (pixelRefineRunning) return
         pixelCalibrationJob?.cancel()
+        val token = ++pixelRefineToken
         pixelRefineRunning = true
         pixelCalibrationJob = viewModelScope.launch(Dispatchers.Default) {
-            val alignment = PixelCalibration.refine(
-                pixels, imageW, imageH, grid, pixelCalibrationThreshold,
-            )
-            withContext(Dispatchers.Main) {
-                pixelCalibrationScore = alignment.score
-                pixelCalibrationApplied = alignment.applied
-                if (applyToGrid && alignment.applied) pixelCalibration = alignment.grid
-                pixelRefineRunning = false
+            try {
+                val alignment = PixelCalibration.refine(
+                    pixels, imageW, imageH, grid, pixelCalibrationThreshold,
+                )
+                withContext(Dispatchers.Main) {
+                    if (token != pixelRefineToken) return@withContext
+                    if (requireSmart && !pixelCalibrationSmart) return@withContext
+                    pixelCalibrationScore = alignment.score
+                    pixelCalibrationApplied = alignment.applied
+                    if (applyToGrid && alignment.applied) {
+                        pixelCalibration = alignment.grid.fittedWithin(imageW, imageH)
+                        pixelCalibrationMethod = PixelGridInspector.Method.MANUAL
+                        schedulePixelGridAnalysis(delayMs = 0L)
+                    }
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    if (token == pixelRefineToken) pixelRefineRunning = false
+                }
             }
         }
     }
@@ -926,35 +1184,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * 确认校准：按校准网格裁出像素画本体，行列即图纸网格。
      *
-     * 智能对齐开启时先吸附一次；信号低于阈值就保留用户当前网格，
-     * 不强行改。裁剪后直接进参数页，不再经过第二次自由裁剪，
-     * 避免用户辛苦对齐的网格被裁歪。
+     * 不再在确认时二次 refine：智能对齐在进页面、开开关、改阈值时就已经
+     * 落到了网格上，用户看到哪张网格就按哪张生成。生成走
+     * [PixelImportPipeline.convert]，和「看图纸」完全同一条管线。
      */
     fun confirmPixelCalibration() {
         val pixels = imagePixels ?: return
         val grid0 = pixelCalibration ?: return
+        val palette = selectedPalette ?: return
         if (pixelCalibrationBusy) return
         pixelCalibrationBusy = true
         val w = imageW
         val h = imageH
+        val options = currentOptions()
+        val aligned = pixelCalibrationApplied
         viewModelScope.launch(Dispatchers.Default) {
             try {
-                val alignment = if (pixelCalibrationSmart) {
-                    PixelCalibration.refine(
-                        pixels, w, h, grid0, pixelCalibrationThreshold,
-                    )
-                } else {
-                    PixelCalibration.Alignment(grid0, 0f, applied = false)
+                val conversion = PixelImportPipeline.convert(
+                    pixels, w, h, grid0, palette, options,
+                ) { stage, progress ->
+                    genState = GenState.Running(stage, progress)
                 }
-                val aligned = if (alignment.applied) alignment.grid else grid0
-                // 拖动阶段允许网格滑出边缘；确认时把整张网格收进图内再裁，
-                // 裁出的宽高正好等于网格宽高，采样偏移归零后不会错位。
-                val grid = aligned.fittedWithin(w, h)
-                val l = grid.offsetX.roundToInt().coerceIn(0, w - 1)
-                val t = grid.offsetY.roundToInt().coerceIn(0, h - 1)
-                val r = grid.right.roundToInt().coerceIn(l + 1, w)
-                val b = grid.bottom.roundToInt().coerceIn(t + 1, h)
-                val cropped = ImageTransforms.crop(pixels, w, h, CropRect(l.toFloat(), t.toFloat(), r.toFloat(), b.toFloat()))
+                val grid = conversion.grid
+                val cropped = conversion.cropped
+                val result = conversion.result
                 val preview = Bitmap.createBitmap(
                     cropped.pixels, cropped.width, cropped.height, Bitmap.Config.ARGB_8888,
                 )
@@ -964,9 +1217,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     imageH = cropped.height
                     imagePreview = preview
                     cropRect = CropRect.full(cropped.width, cropped.height)
-                    pixelCalibration = grid
-                    pixelCalibrationScore = alignment.score
-                    pixelCalibrationApplied = alignment.applied
+                    // 裁完图后网格原点就是 (0,0)，保留旧 offset 会让下一次
+                    // 复查/重算把整张网格推出画面。
+                    pixelCalibration = grid.copy(offsetX = 0.0, offsetY = 0.0)
                     pixelArtMode = true
                     pixelArtGrid = grid.cols to grid.rows
                     gridW = grid.cols
@@ -976,14 +1229,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     cropGridUserSet = true
                     cropPreview = null
                     paramsFromCrop = false
+                    pixelAnalysisJob?.cancel()
+                    pixelAnalysisToken++
+                    pixelAnalysisRunning = false
+                    pixelGridAnalysis = null
+                    pixelCalibrationPreview = null
+                    pixelCropSourcePixels = null
+                    pixelCropSourceW = 0
+                    pixelCropSourceH = 0
+                    pixelCropSourceRect = null
                     adaptiveAnchor = 0
                     adaptiveScale = 1f
-                    screen = Screen.PARAMS
+                    genState = GenState.Running(GenerationStage.DOWNSAMPLE, 0f)
+                }
+                genState = GenState.Done(result)
+                saveAfterGenerate(result)
+                withContext(Dispatchers.Main) {
+                    projectPages = listOf(result.cells)
+                    editor = EditorEngine(result.width, result.height, result.cells)
+                    editorRevision++
+                    editorTool = EditorTool.NONE
+                    editorFromLibrary = false
+                    previewReturn = Screen.HOME
                     toast = when {
-                        alignment.applied -> "已按格线对齐 ${grid.cols}×${grid.rows}"
-                        pixelCalibrationSmart -> "格线信号低于阈值，已保留手动网格"
-                        else -> "已使用手动网格 ${grid.cols}×${grid.rows}"
+                        aligned -> "已对齐 ${grid.cols}×${grid.rows}，进入编辑"
+                        pixelCalibrationSmart -> "格线信号偏低，按手动网格生成 ${grid.cols}×${grid.rows}"
+                        else -> "已按手动网格生成 ${grid.cols}×${grid.rows}"
                     }
+                    screen = Screen.EDITOR
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -1269,8 +1542,38 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             true
         }
         Screen.PIXEL_CALIBRATE -> {
-            screen = Screen.HOME
-            true
+            if (pixelCalibrationBusy) {
+                true
+            } else {
+                val source = pixelCropSourcePixels
+                if (source != null && pixelCropSourceW > 0 && pixelCropSourceH > 0) {
+                    pixelAnalysisJob?.cancel()
+                    pixelAnalysisToken++
+                    pixelAnalysisRunning = false
+                    imagePixels = source
+                    imageW = pixelCropSourceW
+                    imageH = pixelCropSourceH
+                    cropRect = pixelCropSourceRect ?: CropRect.full(imageW, imageH)
+                    rebuildPreview()
+                    syncCropGridToRect(cropRect!!)
+                    pixelCalibration = null
+                    pixelCalibrationMethod = PixelGridInspector.Method.MANUAL
+                    pixelCalibrationDetected = false
+                    pixelCalibrationApplied = false
+                    pixelCalibrationScore = 0f
+                    pixelGridAnalysis = null
+                    pixelCalibrationPreview = null
+                    screen = Screen.CROP
+                } else if (imagePixels != null && cropRect != null) {
+                    // 没有快照说明不是从裁剪页进来的（例如旧项目直达校准）；
+                    // 保留当前图与原选框，仍然只退一层。
+                    screen = Screen.CROP
+                } else {
+                    homeTab = HomeTab.CREATE
+                    screen = Screen.HOME
+                }
+                true
+            }
         }
         Screen.CROP -> {
             screen = Screen.HOME
@@ -1423,9 +1726,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 打开已有项目（进入编辑器继续修改） */
-    fun openProject(entity: ProjectEntity) {
+    fun openProject(summary: ProjectSummary) {
         viewModelScope.launch {
             try {
+                val entity = repository.get(summary.id)
+                if (entity == null) {
+                    lastError = "打开失败：项目已不存在"
+                    return@launch
+                }
                 // 色卡可能尚未加载完成：这里按需等待一次，避免点了没反应
                 var palette = palettes.firstOrNull { it.brand == entity.paletteBrand }
                 if (palette == null) {
@@ -1481,15 +1789,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun deleteProject(entity: ProjectEntity) {
+    fun deleteProject(summary: ProjectSummary) {
         viewModelScope.launch {
-            repository.delete(entity.id)
-            if (currentProjectId == entity.id) currentProjectId = null
+            repository.delete(summary.id)
+            if (currentProjectId == summary.id) currentProjectId = null
         }
     }
 
-    fun renameProject(entity: ProjectEntity, newName: String) {
-        viewModelScope.launch { repository.rename(entity.id, newName) }
+    fun renameProject(summary: ProjectSummary, newName: String) {
+        viewModelScope.launch { repository.rename(summary.id, newName) }
     }
 
     fun startNewProject() {
@@ -1509,6 +1817,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         originalW = 0
         originalH = 0
         cropRect = null
+        cropOriginalPreset = false
         paramsFromCrop = false
         adaptiveAnchor = 0
         adaptiveScale = 1f
@@ -1523,6 +1832,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         pixelCalibrated = false
         pixelCalibrationScore = 0f
         pixelCalibrationApplied = false
+        pixelCalibrationDetected = false
+        pixelCalibrationMethod = PixelGridInspector.Method.MANUAL
+        pixelGridAnalysis = null
+        pixelCalibrationPreview = null
+        pixelRefineJob?.cancel()
+        pixelAnalysisJob?.cancel()
+        pixelAnalysisToken++
+        pixelAnalysisRunning = false
+        pixelCropSourcePixels = null
+        pixelCropSourceW = 0
+        pixelCropSourceH = 0
+        pixelCropSourceRect = null
     }
 
     /** 当前文字拼豆的源文字（非 null = 文字模式）；改文字时更新 */
@@ -1904,7 +2225,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // ---------- 项目库：筛选 / 收藏 / 专辑 / 复刻 ----------
 
     /** 按搜索词/收藏/专辑过滤（库页组合使用） */
-    fun filteredProjects(all: List<ProjectEntity>): List<ProjectEntity> {
+    fun filteredProjects(all: List<ProjectSummary>): List<ProjectSummary> {
         val q = libraryQuery.trim()
         return all.filter { p ->
             (q.isEmpty() || p.name.contains(q, ignoreCase = true)) &&
@@ -1914,21 +2235,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 已用到的专辑名（供筛选 chips） */
-    fun albumNames(all: List<ProjectEntity>): List<String> =
+    fun albumNames(all: List<ProjectSummary>): List<String> =
         all.map { it.album }.filter { it.isNotBlank() }.distinct()
 
-    fun setFavProject(entity: ProjectEntity, fav: Boolean) {
-        viewModelScope.launch { repository.setFav(entity.id, fav) }
+    fun setFavProject(summary: ProjectSummary, fav: Boolean) {
+        viewModelScope.launch { repository.setFav(summary.id, fav) }
     }
 
-    fun setAlbumProject(entity: ProjectEntity, album: String) {
-        viewModelScope.launch { repository.setAlbum(entity.id, album) }
+    fun setAlbumProject(summary: ProjectSummary, album: String) {
+        viewModelScope.launch { repository.setAlbum(summary.id, album) }
     }
 
     /** 复刻项目：全量拷贝为新项目，进度清零，重新开始拼 */
-    fun duplicateProject(entity: ProjectEntity) {
+    fun duplicateProject(summary: ProjectSummary) {
         viewModelScope.launch {
             try {
+                val entity = repository.get(summary.id)
+                if (entity == null) {
+                    lastError = "复刻失败：项目已不存在"
+                    return@launch
+                }
                 val loaded = ensurePalettes()
                 val palette = loaded.firstOrNull { it.brand == entity.paletteBrand } ?: loaded.first()
                 val pageLen = entity.width * entity.height

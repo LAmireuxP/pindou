@@ -23,8 +23,14 @@ object PixelCalibration {
     const val MIN_CELL = 1.0
     const val MAX_CELL = 512.0
 
-    /** 默认对齐阈值：格线平均通道差达到 6% 才认为信号可信 */
-    const val DEFAULT_THRESHOLD = 0.06f
+    /**
+     * 默认对齐阈值：格线平均强度达到最强格线的 30% 才认为信号可信。
+     *
+     * 旧值是 0.06，但那时 [edgeScore] 除以的是「每行都是纯黑纯白突变」的
+     * 理论上限，真实像素画只有 6% 左右，滑条上的 6% 对用户没有任何含义。
+     * 现在分数按剖面 99 分位归一化，30% 就是「明显比噪声强」。
+     */
+    const val DEFAULT_THRESHOLD = 0.30f
 
     /**
      * 一张像素画的采样网格。
@@ -73,6 +79,23 @@ object PixelCalibration {
             )
         }
 
+        /**
+         * 改单元格边长（校准页的「3.单元格大小」）。
+         *
+         * 与 [withCellSize] 不同：列/行数不动，只缩放格子。校准页的操作
+         * 顺序是「先定列数，再让格子边长贴住图片边缘」，如果这里反过来
+         * 改列数，用户刚调好的 60 列会跳成 58 列。横纵比保留，非等比
+         * 缩放的源图不会被强行拉成正方格。
+         */
+        fun withCell(px: Double): Grid {
+            val size = px.coerceIn(MIN_CELL, MAX_CELL)
+            val ratio = if (cellW > 1e-6) cellH / cellW else 1.0
+            return copy(
+                cellW = size,
+                cellH = (size * ratio).coerceIn(MIN_CELL, MAX_CELL),
+            )
+        }
+
         fun nudged(dx: Double, dy: Double): Grid =
             copy(offsetX = offsetX + dx, offsetY = offsetY + dy)
 
@@ -118,6 +141,19 @@ object PixelCalibration {
     )
 
     /**
+     * 格线拟合结果。
+     *
+     * [score] 是每条网格线归一化强度的平均值（0..1），[hits]/[total] 是
+     * 明显压到色块边界上的线数。UI 同时显示两者：只给一个百分比仍然抽象，
+     * 「58/62 条线压中」是用户可以自己核对的量。
+     */
+    data class Fit(
+        val hits: Int,
+        val total: Int,
+        val score: Float,
+    )
+
+    /**
      * 未检测到规则网格时的兜底：覆盖整图的 [cols]×[rows] 网格。
      * 用户可以在校准页直接改列数/行数，不会卡在"识别失败"。
      */
@@ -143,22 +179,46 @@ object PixelCalibration {
      * 格线强度：网格线落在源图颜色边界上的平均程度，0..1。
      * 0 = 每条线都落在纯色内部；1 = 每条线都是纯黑/纯白突变。
      */
-    fun edgeScore(pixels: IntArray, w: Int, h: Int, grid: Grid): Float {
-        if (w <= 0 || h <= 0 || pixels.size != w * h) return 0f
-        if (grid.cols < 1 || grid.rows < 1) return 0f
-        val gx = gradientProfile(pixels, w, h, horizontal = true)
-        val gy = gradientProfile(pixels, w, h, horizontal = false)
-        var sx = 0.0
-        var sy = 0.0
+    fun edgeScore(pixels: IntArray, w: Int, h: Int, grid: Grid): Float =
+        measure(pixels, w, h, grid).score
+
+    /**
+     * 逐条网格线检查是否落在色块边界上。
+     *
+     * 先把梯度剖面按 99 分位归一化：像素画里真正压中的线会接近 1.0，
+     * 噪声线在 0.1 以下。这样 [Fit.score] 与滑条阈值是同一个尺度，
+     * 「阈值 30%」在真实图片上有可复现的含义。
+     *
+     * @param minHit 记为「命中」的单线强度下限；只影响 [Fit.hits] 的显示
+     */
+    fun measure(
+        pixels: IntArray,
+        w: Int,
+        h: Int,
+        grid: Grid,
+        minHit: Float = 0.25f,
+    ): Fit {
+        if (w <= 0 || h <= 0 || pixels.size != w * h) return Fit(0, 0, 0f)
+        if (grid.cols < 1 || grid.rows < 1) return Fit(0, 0, 0f)
+        val nx = normalizeProfile(gradientProfile(pixels, w, h, horizontal = true))
+        val ny = normalizeProfile(gradientProfile(pixels, w, h, horizontal = false))
+        var hits = 0
+        var total = 0
+        var sum = 0.0
         for (k in 0..grid.cols) {
-            sx += sample(gx, grid.offsetX + k * grid.cellW)
+            val v = sample(nx, grid.offsetX + k * grid.cellW).coerceIn(0.0, 1.0)
+            sum += v
+            total++
+            if (v >= minHit) hits++
         }
         for (k in 0..grid.rows) {
-            sy += sample(gy, grid.offsetY + k * grid.cellH)
+            val v = sample(ny, grid.offsetY + k * grid.cellH).coerceIn(0.0, 1.0)
+            sum += v
+            total++
+            if (v >= minHit) hits++
         }
-        sx /= (grid.cols + 1)
-        sy /= (grid.rows + 1)
-        return ((sx + sy) / 2.0).toFloat().coerceIn(0f, 1f)
+        if (total == 0) return Fit(0, 0, 0f)
+        return Fit(hits, total, (sum / total).toFloat().coerceIn(0f, 1f))
     }
 
     /**
@@ -220,7 +280,9 @@ object PixelCalibration {
             offsetX = bestOffsetX,
             offsetY = bestOffsetY,
         ).coerceWithin(w, h)
-        val score = ((bestX + bestY) / 2.0).toFloat().coerceIn(0f, 1f)
+        // 搜索阶段比较的是原始梯度（同一张图内可比）；最终分数换成
+        // 归一化后的格线强度，才能和用户设定的阈值同量纲。
+        val score = measure(pixels, w, h, refined).score
         return Alignment(
             grid = if (score >= threshold) refined else grid,
             score = score,
@@ -299,5 +361,18 @@ object PixelCalibration {
         if (i0 >= profile.size - 1) return profile[profile.size - 1]
         val f = p - i0
         return profile[i0] * (1.0 - f) + profile[i0 + 1] * f
+    }
+
+    /**
+     * 按 99 分位归一化。用分位而不是最大值：一条孤立的 JPEG 振铃不该
+     * 把整张图其他格线压到 5%，而 99 分位仍由真正的色块边界决定。
+     */
+    private fun normalizeProfile(profile: DoubleArray): DoubleArray {
+        if (profile.isEmpty()) return profile
+        val sorted = profile.copyOf()
+        sorted.sort()
+        val p99 = sorted[((sorted.size - 1) * 0.99).toInt()]
+        if (p99 <= 1e-9) return DoubleArray(profile.size)
+        return DoubleArray(profile.size) { (profile[it] / p99).coerceIn(0.0, 1.0) }
     }
 }

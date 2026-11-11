@@ -1,5 +1,6 @@
 package com.pindou.app.ui
 
+import com.pindou.app.ui.icon.MorphIcons
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,12 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.ArrowDownward
-import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.KeyboardArrowLeft
-import androidx.compose.material.icons.rounded.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -41,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -98,7 +94,7 @@ fun ChartCalibrateScreen(vm: AppViewModel) {
                     .clickable { vm.handleBack() },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = MaterialTheme.colorScheme.onSurface)
+                Icon(MorphIcons.ArrowLeft, contentDescription = "返回", tint = MaterialTheme.colorScheme.onSurface)
             }
             Column(Modifier.padding(start = Spacing.xs)) {
                 Text("校准网格", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -187,10 +183,10 @@ fun ChartCalibrateScreen(vm: AppViewModel) {
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            NudgeButton(Icons.Rounded.KeyboardArrowLeft, "左移") { vm.chartNudge(-1, 0) }
-                            NudgeButton(Icons.Rounded.ArrowUpward, "上移") { vm.chartNudge(0, -1) }
-                            NudgeButton(Icons.Rounded.ArrowDownward, "下移") { vm.chartNudge(0, 1) }
-                            NudgeButton(Icons.Rounded.KeyboardArrowRight, "右移") { vm.chartNudge(1, 0) }
+                            NudgeButton(MorphIcons.ChevronLeft, "左移") { vm.chartNudge(-1, 0) }
+                            NudgeButton(MorphIcons.ArrowUp, "上移") { vm.chartNudge(0, -1) }
+                            NudgeButton(MorphIcons.ArrowDown, "下移") { vm.chartNudge(0, 1) }
+                            NudgeButton(MorphIcons.ChevronRight, "右移") { vm.chartNudge(1, 0) }
                         }
                     }
 
@@ -334,20 +330,20 @@ private fun Stepper(
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            StepBtn("−") { onChange((value - 1).coerceAtLeast(min)) }
+            StepBtn(MorphIcons.Minus) { onChange((value - 1).coerceAtLeast(min)) }
             Text(
                 text = "$value$suffix",
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.width(64.dp),
             )
-            StepBtn("＋") { onChange((value + 1).coerceAtMost(max)) }
+            StepBtn(MorphIcons.Plus) { onChange((value + 1).coerceAtMost(max)) }
         }
     }
 }
 
 @Composable
-private fun StepBtn(text: String, onClick: () -> Unit) {
+private fun StepBtn(icon: ImageVector, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(38.dp)
@@ -356,7 +352,12 @@ private fun StepBtn(text: String, onClick: () -> Unit) {
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 

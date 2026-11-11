@@ -22,6 +22,7 @@ object ClayColors {
     val Hairline = Color(0xFFE5E9F1)         // 1px 边框（图标网格线同色）
     val HairlineSoft = Color(0xFFF0F3F8)     // 分隔线
     val Canvas = Color(0xFFF7FAFD)           // 页面底
+    val Stage = Color(0xFFF1F4F7)            // 校准/预览画布底：比页面底更中性，图片不会像嵌在白卡里
     val SurfaceSoft = Color(0xFFEEF4FB)      // 次级底
     val SurfaceCard = Color(0xFFFFFFFF)
     val SurfaceStrong = Color(0xFFE7EEF7)

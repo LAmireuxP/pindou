@@ -19,6 +19,7 @@ class SettingsStore(private val context: Context) {
         val GRID_H = intPreferencesKey("default_grid_h")
         val PALETTE_BRAND = stringPreferencesKey("default_palette_brand")
         val THEME_MODE = stringPreferencesKey("theme_mode")       // system | light | dark
+        val REFRESH_MODE = stringPreferencesKey("refresh_mode")   // system | 60 | 90 | 120
 
         // 统计只在“新建项目落库”时累加，重新生成/改参数不会重复计数。
         val STAT_TOTAL = intPreferencesKey("stat_total")
@@ -73,6 +74,7 @@ class SettingsStore(private val context: Context) {
         val defaultGridH: Int = 48,
         val defaultPaletteBrand: String = "MARD",
         val themeMode: String = "system",
+        val refreshMode: String = "120",
     )
 
     val flow: Flow<Snapshot> = context.dataStore.data.map { p -> p.toSnapshot() }
@@ -84,6 +86,7 @@ class SettingsStore(private val context: Context) {
         defaultGridH = this[GRID_H] ?: 48,
         defaultPaletteBrand = this[PALETTE_BRAND] ?: "MARD",
         themeMode = this[THEME_MODE] ?: "system",
+        refreshMode = this[REFRESH_MODE] ?: "120",
     )
 
     private fun Preferences.toStats() = Stats(
@@ -104,6 +107,8 @@ class SettingsStore(private val context: Context) {
     suspend fun setDefaultPalette(brand: String) = context.dataStore.edit { it[PALETTE_BRAND] = brand }
 
     suspend fun setThemeMode(mode: String) = context.dataStore.edit { it[THEME_MODE] = mode }
+
+    suspend fun setRefreshMode(mode: String) = context.dataStore.edit { it[REFRESH_MODE] = mode }
 
     /**
      * 记录一次“新图纸落库”。

@@ -1,5 +1,6 @@
 package com.pindou.app.ui
 
+import com.pindou.app.ui.icon.MorphIcons
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,13 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AddPhotoAlternate
-import androidx.compose.material.icons.rounded.GridOn
-import androidx.compose.material.icons.rounded.Palette
-import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -81,9 +75,9 @@ fun CreateScreen(
         ) {
             EntryCard(
                 modifier = Modifier.weight(1f),
-                title = "像素画导入",
-                subtitle = "自带网格，逐像素还原",
-                icon = Icons.Rounded.GridOn,
+                title = "导入像素画",
+                subtitle = "保留原格子，逐格还原",
+                icon = MorphIcons.Grid,
                 iconBg = ClayColors.TintMint,
                 iconTint = ClayColors.BrandTeal,
                 onClick = onPickPixel,
@@ -92,7 +86,7 @@ fun CreateScreen(
                 modifier = Modifier.weight(1f),
                 title = "色号图识别",
                 subtitle = "现成图纸，自动认格",
-                icon = Icons.Rounded.Palette,
+                icon = MorphIcons.Palette,
                 iconBg = ClayColors.TintButter,
                 iconTint = ClayColors.BrandOchre,
                 onClick = onPickChart,
@@ -107,7 +101,7 @@ fun CreateScreen(
                 modifier = Modifier.weight(1f),
                 title = "文字拼豆",
                 subtitle = "打字排版生成图纸",
-                icon = Icons.Rounded.TextFields,
+                icon = MorphIcons.Type,
                 iconBg = ClayColors.TintRose,
                 iconTint = ClayColors.BrandPink,
                 onClick = { textDialogOpen = true },
@@ -116,7 +110,7 @@ fun CreateScreen(
                 modifier = Modifier.weight(1f),
                 title = "空白画布",
                 subtitle = "${vm.gridW}×${vm.gridH} · 从零手绘",
-                icon = Icons.Rounded.Add,
+                icon = MorphIcons.Plus,
                 iconBg = ClayColors.TintSky,
                 iconTint = ClayColors.PrimaryInk,
                 onClick = {
@@ -128,13 +122,14 @@ fun CreateScreen(
 
         Spacer(Modifier.height(Spacing.xs))
         Text(
-            "不知道怎么选：照片用「导入照片」，已经是像素画用「像素画导入」，" +
-                "带色号的现成图纸用「色号图识别」。",
+            "不知道怎么选：普通照片用「导入照片」；图片本身就是像素画、想保留原格子，" +
+                "用「导入像素画」；带色号的现成图纸用「色号图识别」。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 2.dp),
         )
-        Spacer(Modifier.height(Spacing.xxl))
+        // 玻璃底栏叠在内容上，尾部留出滚动余量
+        Spacer(Modifier.height(104.dp))
     }
 
     if (textDialogOpen) {
@@ -226,14 +221,14 @@ private fun PhotoEntry(onClick: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Rounded.AddPhotoAlternate,
+                    MorphIcons.ImagePlus,
                     contentDescription = null,
                     tint = ClayColors.PrimaryInk,
                     modifier = Modifier.size(30.dp),
                 )
             }
             Icon(
-                Icons.AutoMirrored.Rounded.ArrowForward,
+                MorphIcons.ArrowRight,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier

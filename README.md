@@ -16,6 +16,8 @@
 - 拼装引导：按行或按列高亮，记录进度
 - 导出：色号 PNG、符号 PNG、A4 分页 PDF、采购清单、.bpat 工程文件
 - 空白画布、文字图纸、项目库、收藏与专辑、深色模式
+- 屏幕刷新率：跟随系统 / 60 / 90 / 120 Hz，应用内独立生效
+- 生成统计：按创建范式统计图纸数量
 
 ## 构建
 
@@ -40,10 +42,17 @@ keyPassword=<密码>
 ## 色卡数据
 
 - MARD / COCO / 漫漫 / 盼盼 / 咪小窝：[Zippland/perler-beads](https://github.com/Zippland/perler-beads)（AGPL-3.0）
-- Perler / Hama / Artkal：[xuange6610/PindouAI](https://github.com/xuange6610/PindouAI)（Apache-2.0）
+- Perler / Hama / Artkal：公开色卡数据整理（Apache-2.0）
 - 全色系 24–272 套装：实物色卡整理
 
 色值为工程近似值，与实体豆可能存在色差，请以实物色卡为准。
+
+## 版本
+
+- 1.2.4：新增应用内 60 / 90 / 120 Hz 刷新率切换与驻留，完善像素校准、项目库与统计
+- 1.2.3：项目库性能、创建与导入流程整理
+- 1.2.2：像素图校准、裁剪与编辑器交互修正
+- 1.2.1：首个公开版本
 
 ## 许可
 

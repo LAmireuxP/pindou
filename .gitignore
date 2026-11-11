@@ -27,3 +27,13 @@ keystore/
 # Build outputs
 *.apk
 *.aab
+
+# Local analysis artifacts
+.codex-artifacts/
+dbcheck/
+tools/
+$null
+u.xml
+ui-*.png
+ui-*.xml
+test-src-*.jpg

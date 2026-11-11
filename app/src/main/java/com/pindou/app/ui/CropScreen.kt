@@ -1,5 +1,6 @@
 package com.pindou.app.ui
 
+import com.pindou.app.ui.icon.MorphIcons
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -21,13 +22,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.RotateLeft
-import androidx.compose.material.icons.automirrored.filled.RotateRight
-import androidx.compose.material.icons.filled.Flip
-import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material.icons.rounded.GridOn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -65,6 +61,7 @@ import com.pindou.app.ui.shadcn.OutlinedButton
 import com.pindou.app.ui.shadcn.ShCard
 import com.pindou.app.ui.shadcn.ShIconTile
 import com.pindou.app.ui.shadcn.ShPageHeader
+import com.pindou.app.ui.shadcn.TextButton
 import com.pindou.app.ui.theme.ClayColors
 import com.pindou.app.ui.theme.Spacing
 import kotlin.math.abs
@@ -101,6 +98,13 @@ private enum class CropGuides(val label: String) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CropScreen(vm: AppViewModel) {
+    // 像素画走独立裁剪页：只保留「框住画布」这一件事。
+    // 照片页的三分线、网格着色、旋转镜像在这里全是噪音，用户真正要调
+    // 的网格在下一步「像素校准」里。
+    if (vm.pixelArtMode) {
+        PixelArtCropScreen(vm)
+        return
+    }
     val bitmap = vm.imagePreview
     val rect = vm.cropRect
     val imgW = vm.imageW
@@ -197,7 +201,7 @@ fun CropScreen(vm: AppViewModel) {
                 contentPadding = PaddingValues(horizontal = 4.dp),
             ) {
                 Icon(
-                    Icons.AutoMirrored.Filled.RotateLeft,
+                    MorphIcons.RotateCcw,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
                 )
@@ -209,7 +213,7 @@ fun CropScreen(vm: AppViewModel) {
                 contentPadding = PaddingValues(horizontal = 4.dp),
             ) {
                 Icon(
-                    Icons.AutoMirrored.Filled.RotateRight,
+                    MorphIcons.RotateCw,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
                 )
@@ -220,7 +224,7 @@ fun CropScreen(vm: AppViewModel) {
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(horizontal = 4.dp),
             ) {
-                Icon(Icons.Filled.Flip, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(MorphIcons.FlipHorizontal, contentDescription = null, modifier = Modifier.size(16.dp))
                 Text("镜像", modifier = Modifier.padding(start = 3.dp))
             }
             OutlinedButton(
@@ -228,7 +232,7 @@ fun CropScreen(vm: AppViewModel) {
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(horizontal = 4.dp),
             ) {
-                Icon(Icons.Outlined.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(MorphIcons.RefreshCcw, contentDescription = null, modifier = Modifier.size(16.dp))
                 Text("重置", modifier = Modifier.padding(start = 3.dp))
             }
         }
@@ -256,7 +260,7 @@ fun CropScreen(vm: AppViewModel) {
                 text = "网格预览",
                 selected = vm.cropPreviewEnabled,
                 modifier = Modifier.weight(1f),
-                icon = Icons.Rounded.GridOn,
+                icon = MorphIcons.Grid,
                 onClick = { vm.toggleCropPreview() },
             )
         }
@@ -320,6 +324,193 @@ fun CropScreen(vm: AppViewModel) {
                 modifier = Modifier.height(48.dp),
             ) {
                 Text("下一步")
+            }
+        }
+    }
+}
+
+/**
+ * 像素画专用裁剪页。
+ *
+ * 整页只有图、四角框和一个确认入口。
+ * 用户在下一步的「像素校准」里才看到格子，不会在裁剪阶段同时面对
+ * 选区比例、网格点数、格线预览三套坐标系。
+ */
+@Composable
+private fun PixelArtCropScreen(vm: AppViewModel) {
+    val bitmap = vm.imagePreview
+    val rect = vm.cropRect
+    val imgW = vm.imageW
+    val imgH = vm.imageH
+    val isSquare = vm.cropAspectMode == CropAspectMode.SQUARE
+    val ratio = if (isSquare) 1f else null
+    val fullSelected = vm.cropOriginalPreset && rect != null && !isSquare &&
+        abs(rect.left) < 0.5f && abs(rect.top) < 0.5f &&
+        abs(rect.right - imgW) < 0.5f && abs(rect.bottom - imgH) < 0.5f
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(ClayColors.Canvas),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .clickable { vm.handleBack() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    MorphIcons.ArrowLeft,
+                    contentDescription = "返回",
+                    tint = ClayColors.Ink,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Text(
+                "选择范围",
+                style = MaterialTheme.typography.titleLarge,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            // 右侧留出与返回键等宽的占位，标题保持视觉居中；
+            // 确认入口只保留底部整行按钮，避免同一屏两个「下一步」。
+            Spacer(Modifier.size(44.dp))
+        }
+
+        Text(
+            "拖动四角框住画面主体，下一步再校准像素格子",
+            style = MaterialTheme.typography.bodySmall,
+            color = ClayColors.Muted,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
+        )
+
+        if (bitmap == null || rect == null || imgW <= 0 || imgH <= 0) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "没有可裁剪的图片，请重新导入",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = { vm.backToHome() }) { Text("返回首页") }
+            }
+            return@Column
+        }
+
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            val density = LocalDensity.current
+            val maxWpx = with(density) { maxWidth.toPx() }
+            val maxHpx = with(density) { maxHeight.toPx() }
+            val scale = remember(imgW, imgH, maxWpx, maxHpx) {
+                minOf(maxWpx / imgW, maxHpx / imgH)
+            }
+            val dispW = with(density) { (imgW * scale).toDp() }
+            val dispH = with(density) { (imgH * scale).toDp() }
+            val image = remember(bitmap) { bitmap.asImageBitmap() }
+            Box(Modifier.align(Alignment.Center).size(dispW, dispH)) {
+                Image(
+                    bitmap = image,
+                    contentDescription = "待裁剪像素画",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.FillBounds,
+                )
+                CropOverlay(
+                    rect = rect,
+                    scale = scale,
+                    imgW = imgW,
+                    imgH = imgH,
+                    ratio = ratio,
+                    guides = CropGuides.NONE,
+                    preview = null,
+                    previewImage = null,
+                    gridW = vm.gridW,
+                    gridH = vm.gridH,
+                    showGrid = false,
+                    showGuides = false,
+                    onRectChange = vm::updateCropRect,
+                )
+            }
+        }
+
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(ClayColors.SurfaceCard)
+                .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
+                CropSegment(
+                    text = "原图",
+                    selected = fullSelected,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    vm.selectCropOriginal()
+                }
+                CropSegment(
+                    text = "自由",
+                    selected = !isSquare && !fullSelected,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    vm.changeCropAspectMode(CropAspectMode.FREE)
+                }
+                CropSegment(
+                    text = "正方形",
+                    selected = isSquare,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    vm.changeCropAspectMode(CropAspectMode.SQUARE)
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Spacing.xs, bottom = Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "选区 ${rect.width.roundToInt()} × ${rect.height.roundToInt()} px",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "下一步：像素校准",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = ClayColors.PrimaryInk,
+                )
+            }
+
+            Button(
+                onClick = { vm.confirmCrop() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+            ) {
+                Icon(MorphIcons.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text("下一步", modifier = Modifier.padding(start = 6.dp))
             }
         }
     }
@@ -414,7 +605,7 @@ private fun GridStepper(value: Int, onChange: (Int) -> Unit) {
             shape = RoundedCornerShape(8.dp),
             contentPadding = PaddingValues(0.dp),
         ) {
-            Text("−", style = MaterialTheme.typography.labelLarge)
+            Icon(MorphIcons.Minus, contentDescription = "减小网格", modifier = Modifier.size(14.dp))
         }
         Text(
             "$value",
@@ -428,7 +619,7 @@ private fun GridStepper(value: Int, onChange: (Int) -> Unit) {
             shape = RoundedCornerShape(8.dp),
             contentPadding = PaddingValues(0.dp),
         ) {
-            Text("+", style = MaterialTheme.typography.labelLarge)
+            Icon(MorphIcons.Plus, contentDescription = "增大网格", modifier = Modifier.size(14.dp))
         }
     }
 }
@@ -446,6 +637,8 @@ private fun CropOverlay(
     previewImage: androidx.compose.ui.graphics.ImageBitmap?,
     gridW: Int,
     gridH: Int,
+    showGrid: Boolean = true,
+    showGuides: Boolean = true,
     onRectChange: (CropRect) -> Unit,
 ) {
     val currentRect by rememberUpdatedState(rect)
@@ -528,6 +721,8 @@ private fun CropOverlay(
             previewImage = previewImage,
             gridW = gridW,
             gridH = gridH,
+            showGrid = showGrid,
+            showGuides = showGuides,
         )
     }
 }
@@ -594,6 +789,8 @@ private fun DrawScope.drawCropUi(
     previewImage: androidx.compose.ui.graphics.ImageBitmap?,
     gridW: Int,
     gridH: Int,
+    showGrid: Boolean = true,
+    showGuides: Boolean = true,
 ) {
     val cl = rect.left * scale
     val ct = rect.top * scale
@@ -627,7 +824,7 @@ private fun DrawScope.drawCropUi(
         val gh = if (matches) preview!!.gridH else gridH
         val cellW = w / gw.coerceAtLeast(1)
         val cellH = h / gh.coerceAtLeast(1)
-        if (min(cellW, cellH) >= 6f) {
+        if (showGrid && min(cellW, cellH) >= 6f) {
             val line = Color.White.copy(alpha = if (matches) 0.20f else 0.35f)
             val lw = 1.dp.toPx()
             for (i in 1 until gw) {
@@ -641,7 +838,7 @@ private fun DrawScope.drawCropUi(
         }
     }
 
-    if (w > 0f && h > 0f) {
+    if (showGuides && w > 0f && h > 0f) {
         drawGuides(guides, cl, ct, w, h)
     }
 

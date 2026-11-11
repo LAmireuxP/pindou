@@ -1,5 +1,6 @@
 package com.pindou.app.ui
 
+import com.pindou.app.ui.icon.MorphIcons
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,8 +21,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -140,7 +139,7 @@ private fun PreviewContent(vm: AppViewModel, result: com.pindou.app.core.pattern
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = { vm.backFromPreview() }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回上一步")
+                Icon(MorphIcons.ArrowLeft, contentDescription = "返回上一步")
             }
             Column(Modifier.weight(1f)) {
                 Text("图纸预览", style = MaterialTheme.typography.displayMedium)

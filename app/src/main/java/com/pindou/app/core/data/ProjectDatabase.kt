@@ -43,10 +43,36 @@ data class ProjectEntity(
     val refPath: String? = null,
 )
 
+/**
+ * 项目库列表用的轻量投影。
+ *
+ * cells / locked / doneCells 是整张图纸的 BLOB，一份 60×60 图纸就有 14KB+；
+ * 项目一多，SELECT * 会在切到项目库时把几十兆数据搬进内存并全部反序列化，
+ * 这就是切页卡一下的来源。列表只取卡片需要的字段，打开项目时再按 id 读整行。
+ */
+data class ProjectSummary(
+    val id: Long,
+    val name: String,
+    val width: Int,
+    val height: Int,
+    val paletteBrand: String,
+    val thumbnailPath: String?,
+    val updatedAt: Long,
+    val fav: Boolean,
+    val album: String,
+    val pages: Int,
+)
+
 @Dao
 interface ProjectDao {
     @Query("SELECT * FROM projects ORDER BY updatedAt DESC")
     fun observeAll(): Flow<List<ProjectEntity>>
+
+    @Query(
+        "SELECT id, name, width, height, paletteBrand, thumbnailPath, updatedAt, fav, album, pages " +
+            "FROM projects ORDER BY updatedAt DESC",
+    )
+    fun observeSummaries(): Flow<List<ProjectSummary>>
 
     @Query("SELECT * FROM projects WHERE id = :id")
     suspend fun getById(id: Long): ProjectEntity?

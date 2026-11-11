@@ -1,5 +1,6 @@
 package com.pindou.app.ui.editor
 
+import com.pindou.app.ui.icon.MorphIcons
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,28 +25,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Colorize
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.FormatColorFill
-import androidx.compose.material.icons.filled.FormatColorReset
-import androidx.compose.material.icons.filled.FormatPaint
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PanTool
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -270,7 +249,7 @@ fun EditorScreen(vm: AppViewModel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 UndoRedoButtons(vm, engine)
                 IconButton(onClick = { showMenu = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                    Icon(MorphIcons.MoreVertical, contentDescription = "更多")
                 }
                 Button(
                     onClick = { vm.finishEditor() },
@@ -329,7 +308,7 @@ fun EditorScreen(vm: AppViewModel) {
 
             if (vm.refBitmap != null) {
                 CanvasPill(
-                    icon = Icons.Filled.Visibility,
+                    icon = MorphIcons.Eye,
                     text = if (vm.showRefOverlay) {
                         "原图 ${(vm.refOpacity * 100).roundToInt()}%"
                     } else {
@@ -386,7 +365,7 @@ fun EditorScreen(vm: AppViewModel) {
                     modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        MorphIcons.ChevronLeft,
                         contentDescription = "上一页",
                         modifier = Modifier.size(20.dp),
                     )
@@ -402,7 +381,7 @@ fun EditorScreen(vm: AppViewModel) {
                     modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        MorphIcons.ChevronRight,
                         contentDescription = "下一页",
                         modifier = Modifier.size(20.dp),
                     )
@@ -430,31 +409,31 @@ fun EditorScreen(vm: AppViewModel) {
                 onClick = { showPaletteSheet = true },
             )
             EditorToolButton(
-                Icons.Filled.Brush,
+                MorphIcons.Brush,
                 "画笔",
                 vm.editorTool == EditorTool.PAINT,
                 modifier = Modifier.weight(1f),
             ) { vm.editorTool = EditorTool.PAINT }
             EditorToolButton(
-                Icons.Filled.FormatPaint,
+                MorphIcons.PaintBucket,
                 "填充",
                 vm.editorTool == EditorTool.FILL,
                 modifier = Modifier.weight(1f),
             ) { vm.editorTool = EditorTool.FILL }
             EditorToolButton(
-                Icons.Filled.FormatColorReset,
+                MorphIcons.Eraser,
                 "橡皮",
                 vm.editorTool == EditorTool.ERASE,
                 modifier = Modifier.weight(1f),
             ) { vm.editorTool = EditorTool.ERASE }
             EditorToolButton(
-                Icons.Filled.Colorize,
+                MorphIcons.Pipette,
                 "吸管",
                 vm.editorTool == EditorTool.PICKER,
                 modifier = Modifier.weight(1f),
             ) { vm.editorTool = EditorTool.PICKER }
             EditorToolButton(
-                Icons.Filled.PanTool,
+                MorphIcons.Hand,
                 "移动",
                 vm.editorTool == EditorTool.PAN,
                 modifier = Modifier.weight(1f),
@@ -574,7 +553,7 @@ fun EditorScreen(vm: AppViewModel) {
                         if (paletteQuery.isNotEmpty()) {
                             IconButton(onClick = { paletteQuery = "" }) {
                                 Icon(
-                                    Icons.Filled.Clear,
+                                    MorphIcons.X,
                                     contentDescription = "清空搜索",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp),
@@ -729,7 +708,7 @@ fun EditorScreen(vm: AppViewModel) {
                     )
                 }
                 MenuItemRow(
-                    icon = Icons.Filled.FormatColorFill,
+                    icon = MorphIcons.PaintBucket,
                     title = "色板管理",
                     subtitle = "换品牌 / 合并相近色",
                 ) {
@@ -737,7 +716,7 @@ fun EditorScreen(vm: AppViewModel) {
                     showManageSheet = true
                 }
                 MenuItemRow(
-                    icon = Icons.Filled.Palette,
+                    icon = MorphIcons.Palette,
                     title = "替换相似颜色",
                     subtitle = "同色系并成一个色号，减少换豆",
                 ) {
@@ -755,7 +734,7 @@ fun EditorScreen(vm: AppViewModel) {
                     showReplaceSheet = true
                 }
                 MenuItemRow(
-                    icon = Icons.Filled.ContentCopy,
+                    icon = MorphIcons.Copy,
                     title = "复制当前页",
                     subtitle = "新页继承当前页内容与锁定状态",
                 ) {
@@ -763,7 +742,7 @@ fun EditorScreen(vm: AppViewModel) {
                     showMenu = false
                 }
                 MenuItemRow(
-                    icon = Icons.Filled.DeleteOutline,
+                    icon = MorphIcons.Trash,
                     title = "删除当前页",
                     subtitle = if (engine.pageCount <= 1) "至少保留一页" else "可撤销",
                     enabled = engine.pageCount > 1,
@@ -772,7 +751,7 @@ fun EditorScreen(vm: AppViewModel) {
                     showMenu = false
                 }
                 MenuItemRow(
-                    icon = Icons.Filled.SwapHoriz,
+                    icon = MorphIcons.SwapHorizontal,
                     title = "改尺寸",
                     subtitle = "所有页内容居中保留",
                 ) {
@@ -780,7 +759,7 @@ fun EditorScreen(vm: AppViewModel) {
                     showResizeDialog = true
                 }
                 MenuItemRow(
-                    icon = Icons.Filled.Download,
+                    icon = MorphIcons.Download,
                     title = "导出 .bpat 图纸",
                     subtitle = "包含全部页、色卡与锁定状态",
                 ) {
@@ -1004,7 +983,7 @@ fun EditorScreen(vm: AppViewModel) {
 
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     CellActionTile(
-                        icon = Icons.Filled.FormatColorFill,
+                        icon = MorphIcons.PaintBucket,
                         title = "填充此格",
                         subtitle = "用 ${currentEntry.code}",
                         enabled = !isLocked && colorIdx != safeColorIndex,
@@ -1014,7 +993,7 @@ fun EditorScreen(vm: AppViewModel) {
                         closeSheet()
                     }
                     CellActionTile(
-                        icon = Icons.Filled.FormatColorReset,
+                        icon = MorphIcons.Eraser,
                         title = "清除此格",
                         subtitle = "留空",
                         enabled = !isLocked && colorIdx >= 0,
@@ -1027,7 +1006,7 @@ fun EditorScreen(vm: AppViewModel) {
 
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     CellActionTile(
-                        icon = Icons.Filled.Colorize,
+                        icon = MorphIcons.Pipette,
                         title = "取此格颜色",
                         subtitle = if (cellEntry != null) "切到 ${cellEntry.code}" else "空格无颜色",
                         enabled = cellEntry != null,
@@ -1037,7 +1016,7 @@ fun EditorScreen(vm: AppViewModel) {
                         closeSheet()
                     }
                     CellActionTile(
-                        icon = Icons.Filled.Brush,
+                        icon = MorphIcons.Brush,
                         title = "整块换色",
                         subtitle = if (blockCount > 0) {
                             "连通 $blockCount 格 → ${currentEntry.code}"
@@ -1058,7 +1037,7 @@ fun EditorScreen(vm: AppViewModel) {
                 // 一整页同色可能是几百格，误触代价大：先点亮，再点一次才执行
                 val needConfirm = sameColorCount >= 100
                 CellActionTile(
-                    icon = Icons.Filled.SwapHoriz,
+                    icon = MorphIcons.SwapHorizontal,
                     title = if (replaceArmed) "再点一次执行" else "同色替换整页",
                     subtitle = if (replaceArmed) {
                         "将改 $sameColorCount 格 → ${currentEntry.code}"
@@ -1081,7 +1060,7 @@ fun EditorScreen(vm: AppViewModel) {
                 }
 
                 CellActionTile(
-                    icon = if (isLocked) Icons.Filled.LockOpen else Icons.Filled.Lock,
+                    icon = if (isLocked) MorphIcons.LockOpen else MorphIcons.Lock,
                     title = if (isLocked) "解锁此格" else "锁定此格",
                     subtitle = "锁定的格子不会被画笔、填充或替换改动",
                     modifier = Modifier.fillMaxWidth(),
@@ -1092,7 +1071,7 @@ fun EditorScreen(vm: AppViewModel) {
                 }
 
                 CellActionTile(
-                    icon = Icons.Filled.Palette,
+                    icon = MorphIcons.Palette,
                     title = "替换相似颜色",
                     subtitle = if (cellEntry != null) {
                         "整图 ${cellEntry.code} 及相近色 → 指定色"
@@ -1127,13 +1106,13 @@ private fun UndoRedoButtons(vm: AppViewModel, engine: EditorEngine) {
         onClick = { vm.undoEditor() },
         enabled = remember(engine, revision) { engine.canUndo },
     ) {
-        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "撤销")
+        Icon(MorphIcons.Undo, contentDescription = "撤销")
     }
     IconButton(
         onClick = { vm.redoEditor() },
         enabled = remember(engine, revision) { engine.canRedo },
     ) {
-        Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "重做")
+        Icon(MorphIcons.Redo, contentDescription = "重做")
     }
 }
 

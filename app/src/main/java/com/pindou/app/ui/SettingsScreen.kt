@@ -17,19 +17,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.pindou.app.core.display.RefreshRateController
 import com.pindou.app.ui.shadcn.ShCard
 import com.pindou.app.ui.shadcn.ShChip
 import com.pindou.app.ui.shadcn.ShPageHeader
 import com.pindou.app.ui.theme.Spacing
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -122,6 +127,49 @@ fun SettingsScreen(vm: AppViewModel) {
             }
         }
 
+        // 刷新率
+        ShCard(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Text("屏幕刷新率", style = MaterialTheme.typography.titleLarge)
+                val view = LocalView.current
+                val rates = remember(view) { RefreshRateController.supportedRates(view.display) }
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    ShChip(
+                        text = "跟随系统",
+                        selected = settings.refreshMode == RefreshRateController.SYSTEM,
+                        onClick = {
+                            vm.viewModelScope.launch {
+                                vm.settingsStore.setRefreshMode(RefreshRateController.SYSTEM)
+                            }
+                        },
+                    )
+                    rates.forEach { hz ->
+                        ShChip(
+                            text = "$hz Hz",
+                            selected = settings.refreshMode == hz.toString(),
+                            onClick = {
+                                vm.viewModelScope.launch {
+                                    vm.settingsStore.setRefreshMode(hz.toString())
+                                }
+                            },
+                        )
+                    }
+                }
+                var liveHz by remember { mutableStateOf(view.display?.refreshRate ?: 0f) }
+                LaunchedEffect(view) {
+                    while (true) {
+                        liveHz = view.display?.refreshRate ?: liveHz
+                        delay(500)
+                    }
+                }
+                Text(
+                    "面板当前 ${liveHz.roundToInt()} Hz · 仅在本应用内生效",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         // 统计
         ShCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -174,7 +222,8 @@ fun SettingsScreen(vm: AppViewModel) {
             }
         }
 
-        Row(modifier = Modifier.padding(bottom = Spacing.lg)) {}
+        // 玻璃底栏叠在内容上，尾部留出滚动余量
+        Row(modifier = Modifier.padding(bottom = 104.dp)) {}
     }
 }
 
